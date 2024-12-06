@@ -1,5 +1,11 @@
+# Copyright (c) 2022-2024, The Isaac Lab Project Developers.
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 import torch
-from omni.isaac.lab.physics.Utils import *
+
+from omni.isaac.lab.utils.math import quat_rotate_inverse
 
 
 class Hydrodynamics:
@@ -11,8 +17,8 @@ class Hydrodynamics:
         params,
     ):
         # TODO: Move to dataclass implementation
-        self.linear_damping_base = params["linear_damping"] #TODO: Check if really needed
-        self.quadratic_damping_base = params["quadratic_damping"] #TODO: Check if really needed
+        self.linear_damping_base = params["linear_damping"]  # TODO: Check if really needed
+        self.quadratic_damping_base = params["quadratic_damping"]  # TODO: Check if really needed
 
         self.linear_damping = params["linear_damping"]
         self.quadratic_damping = params["quadratic_damping"]
@@ -53,28 +59,17 @@ class Hydrodynamics:
 
         self._num_envs = num_envs
         self.device = device
-        self.drag = torch.zeros(
-            (self._num_envs, 6), dtype=torch.float32, device=self.device
-        )
+        self.drag = torch.zeros((self._num_envs, 6), dtype=torch.float32, device=self.device)
 
         # damping parameters (individual set for each environment)
-        self.linear_damping = torch.tensor(
-            [self.linear_damping] * num_envs, device=self.device
-        )  # num_envs * 6
-        self.quadratic_damping = torch.tensor(
-            [self.quadratic_damping] * num_envs, device=self.device
-        )  # num_envs * 6
-        self.linear_damping_forward_speed = torch.tensor(
-            self.linear_damping_forward_speed, device=self.device)
+        self.linear_damping = torch.tensor([self.linear_damping] * num_envs, device=self.device)  # num_envs * 6
+        self.quadratic_damping = torch.tensor([self.quadratic_damping] * num_envs, device=self.device)  # num_envs * 6
+        self.linear_damping_forward_speed = torch.tensor(self.linear_damping_forward_speed, device=self.device)
         # damping parameters randomization
         if self._use_drag_randomization:
             # Applying uniform noise as an example
-            self.linear_damping += (
-                torch.rand_like(self.linear_damping) * 2 - 1
-            ) * self._linear_rand
-            self.quadratic_damping += (
-                torch.rand_like(self.quadratic_damping) * 2 - 1
-            ) * self._quad_rand
+            self.linear_damping += (torch.rand_like(self.linear_damping) * 2 - 1) * self._linear_rand
+            self.quadratic_damping += (torch.rand_like(self.quadratic_damping) * 2 - 1) * self._quad_rand
         # Debug : print the initialized coefficients
         # print("linear_damping: ", self.linear_damping)
 
@@ -96,32 +91,17 @@ class Hydrodynamics:
         """
         if self._use_drag_randomization:
             # Generate random noise
-            noise_linear = (
-                torch.rand((len(env_ids), 6), device=self.device) * 2 - 1
-            ) * self._linear_rand
-            noise_quad = (
-                torch.rand((len(env_ids), 6), device=self.device) * 2 - 1
-            ) * self._quad_rand
+            noise_linear = (torch.rand((len(env_ids), 6), device=self.device) * 2 - 1) * self._linear_rand
+            noise_quad = (torch.rand((len(env_ids), 6), device=self.device) * 2 - 1) * self._quad_rand
 
             # Apply noise to the linear and quadratic damping coefficients
             # Use indexing to update only the specified environments
             self.linear_damping[env_ids] = (
-                torch.tensor([self.linear_damping_base], device=self.device).expand_as(
-                    noise_linear
-                )
-                + noise_linear
+                torch.tensor([self.linear_damping_base], device=self.device).expand_as(noise_linear) + noise_linear
             )
             self.quadratic_damping[env_ids] = (
-                torch.tensor(
-                    [self.quadratic_damping_base], device=self.device
-                ).expand_as(noise_quad)
-                + noise_quad
+                torch.tensor([self.quadratic_damping_base], device=self.device).expand_as(noise_quad) + noise_quad
             )
-        # Debug : print the updated coefficients
-        # print("Updated linear damping for reset envs:", self.linear_damping[env_ids])
-        # print(
-        #    "Updated quadratic damping for reset envs:", self.quadratic_damping[env_ids]
-        # )
         return
 
     def ComputeDampingMatrix(self, vel):
@@ -136,52 +116,21 @@ class Hydrodynamics:
         lin_damp = (
             self.linear_damping
             + self.offset_linear_damping
-            - (
-                self.linear_damping_forward_speed
-                + self.offset_lin_forward_damping_speed
-            )
+            - (self.linear_damping_forward_speed + self.offset_lin_forward_damping_speed)
         )
         # print("lin_damp: ", lin_damp)
-        quad_damp = (
-            (self.quadratic_damping + self.offset_nonlin_damping).mT * torch.abs(vel.mT)
-        ).mT
+        quad_damp = ((self.quadratic_damping + self.offset_nonlin_damping).mT * torch.abs(vel.mT)).mT
         # print("quad_damp: ", quad_damp)
         # scaling and adding both matrices
         damping_matrix = (lin_damp + quad_damp) * self.scaling_damping
         # print("damping_matrix: ", damping_matrix)
         return damping_matrix
 
-    def ComputeHydrodynamicsEffects(
-        self, quaternions, world_vel
-    ):
-        rot_mat = quaternion_to_matrix(quaternions)
-        rot_mat_inv = rot_mat.mT
+    def ComputeHydrodynamicsEffects(self, quaternions, world_vel):
 
-        self.local_lin_velocities = getLocalLinearVelocities(
-            world_vel[:, :3], rot_mat_inv
-        )
-        self.local_ang_velocities = getLocalAngularVelocities(
-            world_vel[:, 3:], rot_mat_inv
-        )
-
-        self.local_velocities = torch.hstack(
-            [self.local_lin_velocities, self.local_ang_velocities]
-        )
-
-        if self.use_water_current:
-            self.flow_vel = torch.tensor(self.flow_vel, device=self.device)
-
-            if self.flow_vel.dim() == 1:
-                self.flow_vel = self.flow_vel.unsqueeze(0).expand_as(world_vel[:, :3])
-
-            self.local_flow_vel = getLocalLinearVelocities(self.flow_vel, rot_mat_inv)
-            self.relative_lin_velocities = (
-                getLocalLinearVelocities(world_vel[:, :3], rot_mat_inv)
-                - self.local_flow_vel
-            )
-            self.local_velocities = torch.hstack(
-                [self.relative_lin_velocities, self.local_ang_velocities]
-            )
+        self.local_lin_velocities = quat_rotate_inverse(quaternions, world_vel[:, :3])
+        self.local_ang_velocities = quat_rotate_inverse(quaternions, world_vel[:, 3:])
+        self.local_velocities = torch.hstack([self.local_lin_velocities, self.local_ang_velocities])
 
         # Update damping matrix
         damping_matrix = self.ComputeDampingMatrix(self.local_velocities)
