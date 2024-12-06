@@ -5,6 +5,8 @@
 
 import torch
 
+from omni.isaac.lab.utils import configclass
+
 
 class Dynamics:
     def __init__(self, num_envs, device):
@@ -31,55 +33,106 @@ class DynamicsZeroOrder(Dynamics):
         return cmd
 
 
-class DynamicsFirstOrder(Dynamics):
-    def __init__(self, dr_params, num_envs, device, timeConstant, dt, params):
-        super().__init__(num_envs, device)
-        self.cmd_lower_range = params["cmd_lower_range"]
-        self.cmd_upper_range = params["cmd_upper_range"]
-        self.numberOfPointsForInterpolation = params["interpolation"]["numberOfPointsForInterpolation"]
-        self.interpolationPointsFromRealDataLeft = params["interpolation"]["interpolationPointsFromRealDataLeft"]
-        self.interpolationPointsFromRealDataRight = params["interpolation"]["interpolationPointsFromRealDataRight"]
-        self.coeff_neg_commands = params["leastSquareMethod"]["neg_cmd_coeff"]
-        self.coeff_pos_commands = params["leastSquareMethod"]["pos_cmd_coeff"]
+@configclass
+class DynamicsFirstOrderCfg:
 
-        self.tau = timeConstant
+    cmd_lower_range: float = -1.0
+    cmd_upper_range: float = 1.0
+    timeConstant: float = 0.05
+
+    numberOfPointsForInterpolation: int = 1000
+    interpolationPointsFromRealDataLeft: list = [
+        -4.0,
+        -4.0,
+        -4.0,
+        -4.0,
+        -2.0,
+        -1.0,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.50,
+        1.50,
+        4.75,
+        8.25,
+        16.0,
+        19.5,
+        19.5,
+        19.5,
+    ]
+    interpolationPointsFromRealDataRight: list = [
+        -4.0,
+        -4.0,
+        -4.0,
+        -4.0,
+        -2.0,
+        -1.0,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.50,
+        1.50,
+        4.75,
+        8.25,
+        16.0,
+        19.5,
+        19.5,
+        19.5,
+    ]
+    coeff_neg_commands: list = [88.61013986, 163.99545455, 76.81641608, 11.9476958, 0.20374615]
+    coeff_pos_commands: list = [-197.800699, 334.050699, -97.6197902, 7.59341259, -0.0301846154]
+    use_thruster_randomization: bool = False
+    thruster_rand: float = 0.5  # If it is 0.2 it means 0.8 to 1.2
+    use_separate_randomization: bool = False
+    left_rand: float = 0.5  # If it is 0.2 it means 0.8 to 1True1.2
+
+
+class DynamicsFirstOrder(Dynamics):
+    def __init__(self, num_envs, device, dt, cfg: DynamicsFirstOrderCfg = DynamicsFirstOrderCfg()):
+        super().__init__(num_envs, device)
+
+        self.cfg = cfg
+
+        self.tau = self.cfg.timeConstant
         self.idx_matrix = torch.zeros((self.num_envs, 2), dtype=torch.float32, device=self.device)
         self.dt = dt
 
         # thruster randomization
-        self._use_thruster_randomization = dr_params["use_thruster_randomization"]
-        self._thruster_rand = dr_params["thruster_rand"]
-        self._use_separate_randomization = dr_params["use_separate_randomization"]
-        self._left_rand = dr_params["left_rand"]
-        self._right_rand = dr_params["right_rand"]
         self.thruster_multiplier = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
         self.thruster_left_multiplier = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
         self.thruster_right_multiplier = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
-        if self._use_thruster_randomization:
-            if self._use_separate_randomization:
+        if self.cfg.use_thruster_randomization:
+            if self.cfg.use_separate_randomization:
                 self.thruster_left_multiplier = torch.rand(
                     (self.num_envs, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._left_rand + (1 - self._left_rand)
+                ) * 2 * self.cfg.left_rand + (1 - self.cfg.left_rand)
                 self.thruster_right_multiplier = torch.rand(
                     (self.num_envs, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._right_rand + (1 - self._right_rand)
+                ) * 2 * self.cfg.right_rand + (1 - self.cfg.right_rand)
             else:
                 self.thruster_multiplier = torch.rand(
                     (self.num_envs, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._thruster_rand + (1 - self._thruster_rand)
+                ) * 2 * self.cfg.thruster_rand + (1 - self.cfg.thruster_rand)
         # interpolate
         self.commands = torch.linspace(
-            self.cmd_lower_range,
-            self.cmd_upper_range,
-            steps=len(self.interpolationPointsFromRealDataLeft),
+            self.cfg.cmd_lower_range,
+            self.cfg.cmd_upper_range,
+            steps=len(self.cfg.interpolationPointsFromRealDataLeft),
             device=self.device,
         )
-        self.numberOfPointsForInterpolation = self.numberOfPointsForInterpolation
         self.interpolationPointsFromRealDataLeft = torch.tensor(
-            self.interpolationPointsFromRealDataLeft, device=self.device
+            self.cfg.interpolationPointsFromRealDataLeft, device=self.device
         )
         self.interpolationPointsFromRealDataRight = torch.tensor(
-            self.interpolationPointsFromRealDataRight, device=self.device
+            self.cfg.interpolationPointsFromRealDataRight, device=self.device
         )
 
         # forces
@@ -89,24 +142,24 @@ class DynamicsFirstOrder(Dynamics):
         )
 
         # lsm
-        self.coeff_neg_commands = torch.tensor(self.coeff_neg_commands, device=self.device)
-        self.coeff_pos_commands = torch.tensor(self.coeff_pos_commands, device=self.device)
+        self.coeff_neg_commands = torch.tensor(self.cfg.coeff_neg_commands, device=self.device)
+        self.coeff_pos_commands = torch.tensor(self.cfg.coeff_pos_commands, device=self.device)
 
         self.interpolate_on_field_data()
 
     def reset_thruster_randomization(self, env_ids: torch.Tensor, num_resets: int) -> None:
-        if self._use_thruster_randomization:
-            if self._use_separate_randomization:
+        if self.cfg.use_thruster_randomization:
+            if self.cfg.use_separate_randomization:
                 self.thruster_left_multiplier[env_ids] = torch.rand(
                     (num_resets, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._left_rand + (1 - self._left_rand)
+                ) * 2 * self.cfg.left_rand + (1 - self.cfg.left_rand)
                 self.thruster_right_multiplier[env_ids] = torch.rand(
                     (num_resets, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._right_rand + (1 - self._right_rand)
+                ) * 2 * self.cfg.right_rand + (1 - self.cfg.right_rand)
             else:
                 self.thruster_multiplier[env_ids] = torch.rand(
                     (num_resets, 1), dtype=torch.float32, device=self.device
-                ) * 2 * self._thruster_rand + (1 - self._thruster_rand)
+                ) * 2 * self.cfg.thruster_rand + (1 - self.cfg.thruster_rand)
         return
 
     def update(self, thruster_forces_before_dynamics, dt):
@@ -133,24 +186,24 @@ class DynamicsFirstOrder(Dynamics):
         """interpolates the data furnished by on-field experiment"""
 
         self.x_linear_interp = torch.linspace(
-            min(self.commands), max(self.commands), self.numberOfPointsForInterpolation
+            min(self.commands), max(self.commands), self.cfg.numberOfPointsForInterpolation
         )
         self.y_linear_interp_left = torch.nn.functional.interpolate(
             self.interpolationPointsFromRealDataLeft.unsqueeze(0).unsqueeze(0),
-            size=self.numberOfPointsForInterpolation,
+            size=self.cfg.numberOfPointsForInterpolation,
             mode="linear",
             align_corners=True,
         )
         self.y_linear_interp_right = torch.nn.functional.interpolate(
             self.interpolationPointsFromRealDataRight.unsqueeze(0).unsqueeze(0),
-            size=self.numberOfPointsForInterpolation,
+            size=self.cfg.numberOfPointsForInterpolation,
             mode="linear",
             align_corners=True,
         )
         self.y_linear_interp_left = self.y_linear_interp_left.squeeze(0).squeeze(0)  # back to dim 1
         self.y_linear_interp_right = self.y_linear_interp_right.squeeze(0).squeeze(0)  # back to dim 1
-        self.n_left = self.numberOfPointsForInterpolation
-        self.n_right = self.numberOfPointsForInterpolation
+        self.n_left = self.cfg.numberOfPointsForInterpolation
+        self.n_right = self.cfg.numberOfPointsForInterpolation
 
     def get_cmd_interpolated(self, cmd_value):
         """get the corresponding force value in the lookup table of interpolated forces"""
@@ -164,8 +217,8 @@ class DynamicsFirstOrder(Dynamics):
         self.thruster_forces_before_dynamics[:, 1] = self.y_linear_interp_right[idx_right]
 
         # Applying thruster randomization
-        if self._use_thruster_randomization:
-            if self._use_separate_randomization:
+        if self.cfg.use_thruster_randomization:
+            if self.cfg.use_separate_randomization:
                 self.thruster_forces_after_randomization[:, 0] = (
                     self.thruster_forces_before_dynamics[:, 0] * self.thruster_left_multiplier.squeeze()
                 )
@@ -185,7 +238,7 @@ class DynamicsFirstOrder(Dynamics):
 
     def update_forces(self):
         # size (num_envs,2)
-        if self._use_thruster_randomization:
+        if self.cfg.use_thruster_randomization:
             self.thrusters[:, [0, 3]] = self.update(
                 self.thruster_forces_after_randomization, self.dt
             )  # every simulation step that tracks the target  update_thrusters_forces

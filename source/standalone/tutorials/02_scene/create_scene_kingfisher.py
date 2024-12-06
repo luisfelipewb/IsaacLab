@@ -34,25 +34,19 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import torch
+
 torch.set_printoptions(precision=2, sci_mode=False)
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg
+from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
+from omni.isaac.lab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
+from omni.isaac.lab.physics.thruster_dynamics import DynamicsFirstOrder, DynamicsFirstOrderCfg
 from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
 from omni.isaac.lab.sim import SimulationContext
 from omni.isaac.lab.utils import configclass
 
 from omni.isaac.lab_assets import KINGFISHER_CFG  # isort:skip
-
-from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics
-from omni.isaac.lab.physics.hydrostatics import Hydrostatics
-from omni.isaac.lab.physics.thruster_dynamics import DynamicsFirstOrder
-import yaml
-
-# Load the configuration file
-cfg_path = "/home/luis/workspaces/IsaacLab/source/extensions/omni.isaac.lab/omni/isaac/lab/physics/ASV_kingfisher.yaml"
-with open(cfg_path, "r") as f:
-    kingfisher_cfg = yaml.safe_load(f)
 
 
 @configclass
@@ -81,25 +75,11 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot = scene["kingfisher"]
 
     # Initialize the hydrodynamics and hydrostatics
-    hydrostatics_cfg = kingfisher_cfg["dynamics"]["hydrostatics"]
-    hydrostatics = Hydrostatics(num_envs=scene.num_envs, device=robot.device,gravity=sim.cfg.gravity[2],params=hydrostatics_cfg)
-    
-    hydrodynamics_cfg = kingfisher_cfg["dynamics"]["hydrodynamics"]
-    hydrodynamics_dr_cfg = kingfisher_cfg["asv_domain_randomization"]["drag"]
-    hydrodynamics = Hydrodynamics(dr_params=hydrodynamics_dr_cfg, num_envs=scene.num_envs, device=robot.device, params=hydrodynamics_cfg)
+    hydrostatics = Hydrostatics(num_envs=scene.num_envs, device=robot.device, cfg=HydrostaticsCfg())
+    hydrodynamics = Hydrodynamics(num_envs=scene.num_envs, device=robot.device, cfg=HydrodynamicsCfg())
 
-    dr_thruster_cfg = kingfisher_cfg["asv_domain_randomization"]["thruster"]
-    # dr_thruster_cfg["use_thruster_randomization"] = False
-
-    thruster_cfg = kingfisher_cfg["dynamics"]["thrusters"]
-    thruster_dynamics = DynamicsFirstOrder(
-        dr_params=dr_thruster_cfg,
-        num_envs=scene.num_envs,
-        device=robot.device,
-        timeConstant=thruster_cfg["timeConstant"],
-        dt=sim_dt, 
-        params=thruster_cfg
-    )
+    thruster_cfg = DynamicsFirstOrderCfg()
+    thruster_dynamics = DynamicsFirstOrder(num_envs=scene.num_envs, device=robot.device, dt=sim_dt, cfg=thruster_cfg)
     thruster_forces = torch.zeros((scene.num_envs, 1, 6), device=robot.device, dtype=torch.float32)
 
     count = 0
@@ -123,11 +103,10 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
             joint_pos += torch.rand_like(joint_pos) * 0.1
             robot.write_joint_state_to_sim(joint_pos, joint_vel)
-            
+
             # clear internal buffers
             scene.reset()
             print("[INFO]: Resetting robot state...")
-            
 
         # get robot data
         robot_pos = robot.data.root_pos_w.clone()
@@ -139,10 +118,10 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         hydrodynamic_force = hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
 
         combined_force = hydrostatic_force + hydrodynamic_force
-        
+
         force = combined_force[:, :3]
         torque = combined_force[:, 3:]
-        
+
         # Get the link ids
         base_link_id, _ = robot.find_bodies("base_link")
         left_thruster_id, _ = robot.find_bodies("thruster_left")
@@ -157,13 +136,13 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=robot.device)
         # Expand the thrust commands in the first dimension to match the number of environments.
         thrust_cmds = thrust_cmds.unsqueeze(0).expand(scene.num_envs, -1)
-                
+
         thruster_dynamics.set_target_force(thrust_cmds)
-        thruster_forces[:,0,:] = thruster_dynamics.update_forces()
+        thruster_forces[:, 0, :] = thruster_dynamics.update_forces()
 
         torque = torch.zeros_like(torque)
-        robot.set_external_force_and_torque(thruster_forces[...,:3], torque, body_ids=left_thruster_id)
-        robot.set_external_force_and_torque(thruster_forces[...,3:], torque, body_ids=right_thruster_id)
+        robot.set_external_force_and_torque(thruster_forces[..., :3], torque, body_ids=left_thruster_id)
+        robot.set_external_force_and_torque(thruster_forces[..., 3:], torque, body_ids=right_thruster_id)
 
         scene.write_data_to_sim()
 

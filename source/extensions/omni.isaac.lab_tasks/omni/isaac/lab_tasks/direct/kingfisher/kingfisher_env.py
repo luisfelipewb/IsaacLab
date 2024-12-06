@@ -13,6 +13,9 @@ from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
 from omni.isaac.lab.envs.ui import BaseEnvWindow
 from omni.isaac.lab.markers import VisualizationMarkers
+from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
+from omni.isaac.lab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
+from omni.isaac.lab.physics.thruster_dynamics import DynamicsFirstOrder, DynamicsFirstOrderCfg
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.sim import SimulationCfg
 from omni.isaac.lab.terrains import TerrainImporterCfg
@@ -24,28 +27,6 @@ from omni.isaac.lab.utils.math import subtract_frame_transforms
 ##
 from omni.isaac.lab_assets import KINGFISHER_CFG  # isort: skip
 from omni.isaac.lab.markers import CUBOID_MARKER_CFG  # isort: skip
-
-
-# Update location later
-from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics
-from omni.isaac.lab.physics.hydrostatics import Hydrostatics
-from omni.isaac.lab.physics.thruster_dynamics import DynamicsFirstOrder
-
-
-##
-# TODO: use configclass instead
-##
-import yaml
-cfg_path = "/home/luis/workspaces/IsaacLab/source/extensions/omni.isaac.lab/omni/isaac/lab/physics/ASV_kingfisher.yaml"
-with open(cfg_path, "r") as f:
-    kingfisher_cfg = yaml.safe_load(f)
-# Initialize the hydrodynamics and hydrostatics
-hydrostatics_cfg = kingfisher_cfg["dynamics"]["hydrostatics"]
-hydrodynamics_cfg = kingfisher_cfg["dynamics"]["hydrodynamics"]
-hydrodynamics_dr_cfg = kingfisher_cfg["asv_domain_randomization"]["drag"]
-dr_thruster_cfg = kingfisher_cfg["asv_domain_randomization"]["thruster"]
-dr_thruster_cfg["use_thruster_randomization"] = False
-thruster_cfg = kingfisher_cfg["dynamics"]["thrusters"]
 
 
 class KingfisherEnvWindow(BaseEnvWindow):
@@ -120,7 +101,7 @@ class KingfisherEnv(DirectRLEnv):
 
         # Actions
         self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
-        
+
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
@@ -148,16 +129,11 @@ class KingfisherEnv(DirectRLEnv):
         self._thruster_forces = torch.zeros(self.num_envs, 1, 6, device=self.device)
         self._no_torque = torch.zeros(self.num_envs, 1, 3, device=self.device)
 
-
-        self._hydrostatics = Hydrostatics(num_envs=self.num_envs, device=self.device, gravity=self.sim.cfg.gravity[2],params=hydrostatics_cfg)
-        self._hydrodynamics = Hydrodynamics(dr_params=hydrodynamics_dr_cfg, num_envs=self.num_envs, device=self.device, params=hydrodynamics_cfg)
+        self._hydrostatics = Hydrostatics(num_envs=self.num_envs, device=self.device, cfg=HydrostaticsCfg())
+        self._hydrodynamics = Hydrodynamics(num_envs=self.num_envs, device=self.device, cfg=HydrodynamicsCfg())
+        thruster_cfg = DynamicsFirstOrderCfg()
         self._thruster_dynamics = DynamicsFirstOrder(
-            dr_params=dr_thruster_cfg,
-            num_envs=self.num_envs,
-            device=self.device,
-            timeConstant=thruster_cfg["timeConstant"],
-            dt=cfg.sim.dt, 
-            params=thruster_cfg
+            num_envs=self.num_envs, device=self.device, dt=cfg.sim.dt, cfg=thruster_cfg
         )
 
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
@@ -185,26 +161,32 @@ class KingfisherEnv(DirectRLEnv):
         # thrust_cmds = thrust_cmds.unsqueeze(0).expand(self.num_envs, -1)
 
         self._thruster_dynamics.set_target_force(self._actions)
-        self._thruster_forces[:,0,:] = self._thruster_dynamics.update_forces()
+        self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
 
         # Compute the hydrostatic and hydrodynamic forces
         robot_pos = self._robot.data.root_pos_w.clone()
         robot_quat = self._robot.data.root_quat_w.clone()
         robot_vel = self._robot.data.root_vel_w.clone()
-        self._hydrostatic_force[:,0,:] = self._hydrostatics.compute_archimedes_metacentric_local(robot_pos, robot_quat)
-        self._hydrodynamic_force[:,0,:] = self._hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
+        self._hydrostatic_force[:, 0, :] = self._hydrostatics.compute_archimedes_metacentric_local(
+            robot_pos, robot_quat
+        )
+        self._hydrodynamic_force[:, 0, :] = self._hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
 
     def _apply_action(self):
         combined = self._hydrostatic_force + self._hydrodynamic_force
-        self._robot.set_external_force_and_torque(combined[...,:3], combined[...,3:], body_ids=self._base_link)
-        
+        self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
+
         # only apply thruster forces if they are not zero, otherwise it disable external previous forces.
-        lft_thruster_force = self._thruster_forces[...,:3]
-        rgt_thruster_force = self._thruster_forces[...,3:]
+        lft_thruster_force = self._thruster_forces[..., :3]
+        rgt_thruster_force = self._thruster_forces[..., 3:]
         if lft_thruster_force.any():
-            self._robot.set_external_force_and_torque(lft_thruster_force, self._no_torque, body_ids=self._left_thruster_id)
+            self._robot.set_external_force_and_torque(
+                lft_thruster_force, self._no_torque, body_ids=self._left_thruster_id
+            )
         if rgt_thruster_force.any():
-            self._robot.set_external_force_and_torque(rgt_thruster_force, self._no_torque, body_ids=self._right_thruster_id)
+            self._robot.set_external_force_and_torque(
+                rgt_thruster_force, self._no_torque, body_ids=self._right_thruster_id
+            )
 
     def _get_observations(self) -> dict:
         desired_pos_b, _ = subtract_frame_transforms(

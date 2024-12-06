@@ -5,54 +5,76 @@
 
 import torch
 
+from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.math import quat_rotate_inverse
 
 
+@configclass
+class HydrodynamicsCfg:
+    """Configuration for hydrodynamics."""
+
+    # Add drag disturbances
+    use_drag_randomization: bool = False
+    # Proportion of drag randomization for each drag coefficient
+    # If it is 0.1 it means 0.9 to 1.1
+    # Linear
+    u_linear_rand: float = 0.1  # Forward
+    v_linear_rand: float = 0.1  # Lateral
+    w_linear_rand: float = 0.0  # Vertical. In 2D, neglectable
+    p_linear_rand: float = 0.0  # Roll. In 2D, neglectable
+    q_linear_rand: float = 0.0  # Pitch. In 2D, neglectable
+    r_linear_rand: float = 0.1  # Yaw
+    # Quadratic
+    u_quad_rand: float = 0.1  # Forward
+    v_quad_rand: float = 0.1  # Lateral
+    w_quad_rand: float = 0.0  # Vertical. In 2D, neglectable
+    p_quad_rand: float = 0.0  # Roll. In 2D, neglectable
+    q_quad_rand: float = 0.0  # Pitch. In 2D, neglectable
+    r_quad_rand: float = 0.1  # Yaw
+
+    linear_damping: list = [0.0, 99.99, 99.99, 13.0, 13.0, 5.83]
+    # Nominal [16.44998712, 15.79776044, 100, 13, 13, 6]
+    # SID [0.0, 99.99, 99.99, 13.0, 13.0, 0.82985084]
+    quadratic_damping: list = [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
+    # Nominal [2.942, 2.7617212, 10, 5, 5, 5]
+    # SID [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
+    linear_damping_forward_speed: list = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    offset_linear_damping: float = 0.0
+    offset_lin_forward_damping_speed: float = 0.0
+    offset_nonlin_damping: float = 0.0
+    scaling_damping: float = 1.0
+    offset_added_mass: float = 0.0
+
+
 class Hydrodynamics:
-    def __init__(
-        self,
-        dr_params,
-        num_envs,
-        device,
-        params,
-    ):
-        # TODO: Move to dataclass implementation
-        self.linear_damping_base = params["linear_damping"]  # TODO: Check if really needed
-        self.quadratic_damping_base = params["quadratic_damping"]  # TODO: Check if really needed
+    def __init__(self, num_envs, device, cfg: HydrodynamicsCfg):
 
-        self.linear_damping = params["linear_damping"]
-        self.quadratic_damping = params["quadratic_damping"]
-        self.linear_damping_forward_speed = params["linear_damping_forward_speed"]
-        self.offset_linear_damping = params["offset_linear_damping"]
-        self.offset_lin_forward_damping_speed = params["offset_lin_forward_damping_speed"]
-        self.offset_nonlin_damping = params["offset_nonlin_damping"]
-        self.scaling_damping = params["scaling_damping"]
-        self.offset_added_mass = params["offset_added_mass"]
-        self.scaling_added_mass = params["scaling_added_mass"]
-        self.use_water_current = params["water_current"]["use_water_current"]
-        self.flow_velocity = params["water_current"]["flow_velocity"]
+        self.cfg = cfg
 
-        self._use_drag_randomization = dr_params["use_drag_randomization"]
+        # new variable can be randomized
+        self.linear_damping = self.cfg.linear_damping.copy()
+        self.quadratic_damping = self.cfg.quadratic_damping.copy()
+
         # linear_rand range, calculated as a percentage of the base damping coefficients
         self._linear_rand = torch.tensor(
             [
-                dr_params["u_linear_rand"] * self.linear_damping[0],
-                dr_params["v_linear_rand"] * self.linear_damping[1],
-                dr_params["w_linear_rand"] * self.linear_damping[2],
-                dr_params["p_linear_rand"] * self.linear_damping[3],
-                dr_params["q_linear_rand"] * self.linear_damping[4],
-                dr_params["r_linear_rand"] * self.linear_damping[5],
+                self.cfg.u_linear_rand * self.linear_damping[0],
+                self.cfg.v_linear_rand * self.linear_damping[1],
+                self.cfg.w_linear_rand * self.linear_damping[2],
+                self.cfg.p_linear_rand * self.linear_damping[3],
+                self.cfg.q_linear_rand * self.linear_damping[4],
+                self.cfg.r_linear_rand * self.linear_damping[5],
             ],
             device=device,
         )
         self._quad_rand = torch.tensor(
             [
-                dr_params["u_quad_rand"] * self.quadratic_damping[0],
-                dr_params["v_quad_rand"] * self.quadratic_damping[1],
-                dr_params["w_quad_rand"] * self.quadratic_damping[2],
-                dr_params["p_quad_rand"] * self.quadratic_damping[3],
-                dr_params["q_quad_rand"] * self.quadratic_damping[4],
-                dr_params["r_quad_rand"] * self.quadratic_damping[5],
+                self.cfg.u_quad_rand * self.quadratic_damping[0],
+                self.cfg.v_quad_rand * self.quadratic_damping[1],
+                self.cfg.w_quad_rand * self.quadratic_damping[2],
+                self.cfg.p_quad_rand * self.quadratic_damping[3],
+                self.cfg.q_quad_rand * self.quadratic_damping[4],
+                self.cfg.r_quad_rand * self.quadratic_damping[5],
             ],
             device=device,
         )
@@ -64,9 +86,9 @@ class Hydrodynamics:
         # damping parameters (individual set for each environment)
         self.linear_damping = torch.tensor([self.linear_damping] * num_envs, device=self.device)  # num_envs * 6
         self.quadratic_damping = torch.tensor([self.quadratic_damping] * num_envs, device=self.device)  # num_envs * 6
-        self.linear_damping_forward_speed = torch.tensor(self.linear_damping_forward_speed, device=self.device)
+        self.linear_damping_forward_speed = torch.tensor(self.cfg.linear_damping_forward_speed, device=self.device)
         # damping parameters randomization
-        if self._use_drag_randomization:
+        if self.cfg.use_drag_randomization:
             # Applying uniform noise as an example
             self.linear_damping += (torch.rand_like(self.linear_damping) * 2 - 1) * self._linear_rand
             self.quadratic_damping += (torch.rand_like(self.quadratic_damping) * 2 - 1) * self._quad_rand
@@ -89,7 +111,7 @@ class Hydrodynamics:
         Args:
             env_ids (torch.Tensor): Indices of the environments to reset.
         """
-        if self._use_drag_randomization:
+        if self.cfg.use_drag_randomization:
             # Generate random noise
             noise_linear = (torch.rand((len(env_ids), 6), device=self.device) * 2 - 1) * self._linear_rand
             noise_quad = (torch.rand((len(env_ids), 6), device=self.device) * 2 - 1) * self._quad_rand
@@ -97,10 +119,10 @@ class Hydrodynamics:
             # Apply noise to the linear and quadratic damping coefficients
             # Use indexing to update only the specified environments
             self.linear_damping[env_ids] = (
-                torch.tensor([self.linear_damping_base], device=self.device).expand_as(noise_linear) + noise_linear
+                torch.tensor([self.cfg.linear_damping], device=self.device).expand_as(noise_linear) + noise_linear
             )
             self.quadratic_damping[env_ids] = (
-                torch.tensor([self.quadratic_damping_base], device=self.device).expand_as(noise_quad) + noise_quad
+                torch.tensor([self.cfg.quadratic_damping], device=self.device).expand_as(noise_quad) + noise_quad
             )
         return
 
@@ -115,14 +137,14 @@ class Hydrodynamics:
         # print("vel: ", vel)
         lin_damp = (
             self.linear_damping
-            + self.offset_linear_damping
-            - (self.linear_damping_forward_speed + self.offset_lin_forward_damping_speed)
+            + self.cfg.offset_linear_damping
+            - (self.linear_damping_forward_speed + self.cfg.offset_lin_forward_damping_speed)
         )
         # print("lin_damp: ", lin_damp)
-        quad_damp = ((self.quadratic_damping + self.offset_nonlin_damping).mT * torch.abs(vel.mT)).mT
+        quad_damp = ((self.quadratic_damping + self.cfg.offset_nonlin_damping).mT * torch.abs(vel.mT)).mT
         # print("quad_damp: ", quad_damp)
         # scaling and adding both matrices
-        damping_matrix = (lin_damp + quad_damp) * self.scaling_damping
+        damping_matrix = (lin_damp + quad_damp) * self.cfg.scaling_damping
         # print("damping_matrix: ", damping_matrix)
         return damping_matrix
 
