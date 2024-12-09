@@ -55,7 +55,7 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     episode_length_s = 20.0
     decimation = 3
     action_space = 2
-    observation_space = 12
+    observation_space = 7
     state_space = 0
     debug_vis = True
 
@@ -78,19 +78,20 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
         prim_path="/World/ground",
         terrain_type="plane",
         collision_group=-1,
-        debug_vis=False,
+        debug_vis=True,
     )
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=10.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=5.0, replicate_physics=True)
 
     # robot
     robot: ArticulationCfg = KINGFISHER_CFG.replace(prim_path="/World/envs/env_.*/Robot")
 
     # reward scales
-    lin_vel_reward_scale = -0.0
-    ang_vel_reward_scale = -0.01
-    distance_to_goal_reward_scale = 15.0
+    bearing_reward_scale = -1.0
+    displacement_reward_scale = -0.0
+    lin_vel_reward_scale = -1.1
+
 
 
 class KingfisherEnv(DirectRLEnv):
@@ -109,9 +110,9 @@ class KingfisherEnv(DirectRLEnv):
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
-                "lin_vel",
-                "ang_vel",
-                "distance_to_goal",
+                "bearing",
+                "displacement",
+                "linear_velocity",
             ]
         }
         # Get specific body indices
@@ -158,8 +159,6 @@ class KingfisherEnv(DirectRLEnv):
 
         # Compute the thruster forces based on the actions.
         # thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=self.device)
-        # thrust_cmds = thrust_cmds.unsqueeze(0).expand(self.num_envs, -1)
-
         self._thruster_dynamics.set_target_force(self._actions)
         self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
 
@@ -176,7 +175,7 @@ class KingfisherEnv(DirectRLEnv):
         combined = self._hydrostatic_force + self._hydrodynamic_force
         self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
 
-        # only apply thruster forces if they are not zero, otherwise it disable external previous forces.
+        # only apply thruster forces if they are not zero, otherwise it disables external previous forces.
         lft_thruster_force = self._thruster_forces[..., :3]
         rgt_thruster_force = self._thruster_forces[..., 3:]
         if lft_thruster_force.any():
@@ -192,27 +191,35 @@ class KingfisherEnv(DirectRLEnv):
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
+        # Get bearing and distance to the desired position
+        bearing = torch.atan2(desired_pos_b[:, 1], desired_pos_b[:, 0])
+        displacement = self._robot.data.root_pos_w[:,:2] - self._terrain.env_origins[:,:2]
+
         obs = torch.cat(
             [
-                self._robot.data.root_lin_vel_b,
-                self._robot.data.root_ang_vel_b,
-                self._robot.data.projected_gravity_b,
-                desired_pos_b,
+                self._robot.data.root_lin_vel_b[:,:2], # 2
+                self._robot.data.root_ang_vel_b[:,2].unsqueeze(1), # 1
+                torch.cos(bearing).unsqueeze(1), # 1
+                torch.sin(bearing).unsqueeze(1), # 1
+                displacement, # 2
             ],
-            dim=-1,
+            dim=1,
         )
         observations = {"policy": obs}
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-        lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
-        ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
-        distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
-        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
+        desired_pos_b, _ = subtract_frame_transforms(
+            self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
+        )
+        bearing = torch.square(torch.atan2(desired_pos_b[:, 1], desired_pos_b[:, 0]))
+        displacement = torch.linalg.norm(self._robot.data.root_pos_w[:,:2] - self._terrain.env_origins[:,:2], dim=1)
+        lin_vel = torch.linalg.norm(self._robot.data.root_lin_vel_b[:,:2], dim=1)
+
         rewards = {
-            "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
-            "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
-            "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+            "bearing": bearing * self.cfg.bearing_reward_scale,
+            "displacement": displacement * self.cfg.displacement_reward_scale,
+            "linear_velocity": lin_vel * self.cfg.lin_vel_reward_scale,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
@@ -231,9 +238,9 @@ class KingfisherEnv(DirectRLEnv):
             env_ids = self._robot._ALL_INDICES
 
         # Logging
-        final_distance_to_goal = torch.linalg.norm(
-            self._desired_pos_w[env_ids] - self._robot.data.root_pos_w[env_ids], dim=1
-        ).mean()
+        final_goal_pos_b = self._desired_pos_w[env_ids] - self._robot.data.root_pos_w[env_ids]
+        final_distance_to_goal = torch.linalg.norm(final_goal_pos_b, dim=1).mean()
+        final_bearing_to_goal = torch.atan2(final_goal_pos_b[:, 1], final_goal_pos_b[:, 0]).mean()
         extras = dict()
         for key in self._episode_sums.keys():
             episodic_sum_avg = torch.mean(self._episode_sums[key][env_ids])
@@ -245,6 +252,7 @@ class KingfisherEnv(DirectRLEnv):
         extras["Episode_Termination/died"] = torch.count_nonzero(self.reset_terminated[env_ids]).item()
         extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item()
         extras["Metrics/final_distance_to_goal"] = final_distance_to_goal.item()
+        extras["Metrics/final_bearing_to_goal"] = final_bearing_to_goal.item()
         self.extras["log"].update(extras)
 
         self._robot.reset(env_ids)
@@ -255,9 +263,11 @@ class KingfisherEnv(DirectRLEnv):
 
         self._actions[env_ids] = 0.0
         # Sample new commands
-        self._desired_pos_w[env_ids, :2] = torch.zeros_like(self._desired_pos_w[env_ids, :2]).uniform_(-2.0, 2.0)
+        angle = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi/4, torch.pi/4)
+        self._desired_pos_w[env_ids, 0] = torch.cos(angle)
+        self._desired_pos_w[env_ids, 1] = torch.sin(angle)
+        self._desired_pos_w[env_ids, 2] = 0.0
         self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
-        self._desired_pos_w[env_ids, 2] = torch.zeros_like(self._desired_pos_w[env_ids, 2]).uniform_(0.5, 1.5)
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]
