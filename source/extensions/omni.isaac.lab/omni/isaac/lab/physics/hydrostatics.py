@@ -1,9 +1,10 @@
-# Copyright (c) 2022-2024, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 import torch
+from dataclasses import MISSING
 
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.math import euler_xyz_from_quat, matrix_from_quat
@@ -16,21 +17,19 @@ Fossen, T. I. (1991). Nonlinear modeling and control of Underwater Vehicles. Doc
 
 @configclass
 class HydrostaticsCfg:
+    """Configuration for default hydrostatics."""
 
     gravity: float = -9.81
-    average_hydrostatics_force_value: float = 275.0
-    amplify_torque: float = 1.0
     water_density: float = 997.0  # Kg/m^3
-    mass: float = 35.0
-    box_width: float = 1.0
-    box_length: float = 1.3
-    waterplane_area: float = 0.33  # 0.15 width * 1.1 length * 2 hulls
-    draught_offset: float = 0.21986  # Distance from base_link to bottom of the hull
-    max_draught: float = 0.20  # Kingfisher/Heron draught 120mm in Spec Sheet
 
-    def __post_init__(self):
-        self.metacentric_width = self.box_width / 2
-        self.metacentric_length = self.box_length / 2
+    mass: float = MISSING  # Kg
+    width: float = MISSING  # m
+    length: float = MISSING  # m
+    waterplane_area: float = MISSING  # m^2
+    draught_offset: float = MISSING  # m (distance from base_link to bottom of the hull)
+    max_draught: float = MISSING  # m (max draught of the vessel)
+    average_hydrostatics_force: float = MISSING
+    amplify_torque: float = 1.0
 
 
 class Hydrostatics:
@@ -51,29 +50,25 @@ class Hydrostatics:
         return
 
     def compute_archimedes_metacentric_global(self, submerged_volume, rpy):
-        roll, pitch = rpy[:, 0], rpy[:, 1]  # roll and pich are given in global frame
+        roll, pitch = rpy[:, 0], rpy[:, 1]  # roll and pitch are given in global frame
 
         # compute buoyancy force
         self.archimedes_force_global[:, 2] = -self.cfg.water_density * self.cfg.gravity * submerged_volume
 
         # torques expressed in global frame, size is (num_envs,3)
         self.archimedes_torque_global[:, 0] = (
-            -1 * self.cfg.metacentric_width * (torch.sin(roll) * self.archimedes_force_global[:, 2])
+            -1 * self.cfg.width / 2.0 * (torch.sin(roll) * self.archimedes_force_global[:, 2])
         )
         self.archimedes_torque_global[:, 1] = (
-            -1 * self.cfg.metacentric_length * (torch.sin(pitch) * self.archimedes_force_global[:, 2])
+            -1 * self.cfg.length / 2.0 * (torch.sin(pitch) * self.archimedes_force_global[:, 2])
         )
 
         self.archimedes_torque_global[:, 0] = (
-            -1 * self.cfg.metacentric_width * (torch.sin(roll) * self.cfg.average_hydrostatics_force_value)
+            -1 * self.cfg.width / 2.0 * (torch.sin(roll) * self.cfg.average_hydrostatics_force)
         )  # cannot multiply by the hydrostatics force in isaac sim because of the simulation rate (low then high value)
         self.archimedes_torque_global[:, 1] = (
-            -1 * self.cfg.metacentric_length * (torch.sin(pitch) * self.cfg.average_hydrostatics_force_value)
+            -1 * self.cfg.length / 2.0 * (torch.sin(pitch) * self.cfg.average_hydrostatics_force)
         )
-
-        # debugging
-        # print("self.archimedes_force global: ", self.archimedes_force_global[0,:])
-        # print("self.archimedes_torque global: ", self.archimedes_torque_global[0,:])
 
         return self.archimedes_force_global, self.archimedes_torque_global
 
