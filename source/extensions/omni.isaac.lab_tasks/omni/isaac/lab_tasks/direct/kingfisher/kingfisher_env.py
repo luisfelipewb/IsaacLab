@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -145,7 +145,6 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     lin_vel_reward_scale = -1.1
 
 
-
 class KingfisherEnv(DirectRLEnv):
     cfg: KingfisherEnvCfg
 
@@ -185,7 +184,6 @@ class KingfisherEnv(DirectRLEnv):
         self._hydrostatics = Hydrostatics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrostatics_cfg)
 
         self._hydrodynamics = Hydrodynamics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrodynamics_cfg)
-
 
         self._thruster_dynamics = PropellerActuator(
             num_envs=self.num_envs, device=self.device, dt=cfg.sim.dt, cfg=self.cfg.propeller_cfg
@@ -247,15 +245,15 @@ class KingfisherEnv(DirectRLEnv):
         )
         # Get bearing and distance to the desired position
         bearing = torch.atan2(desired_pos_b[:, 1], desired_pos_b[:, 0])
-        displacement = self._robot.data.root_pos_w[:,:2] - self._terrain.env_origins[:,:2]
+        displacement = self._robot.data.root_pos_w[:, :2] - self._terrain.env_origins[:, :2]
 
         obs = torch.cat(
             [
-                self._robot.data.root_lin_vel_b[:,:2], # 2
-                self._robot.data.root_ang_vel_b[:,2].unsqueeze(1), # 1
-                torch.cos(bearing).unsqueeze(1), # 1
-                torch.sin(bearing).unsqueeze(1), # 1
-                displacement, # 2
+                self._robot.data.root_lin_vel_b[:, :2],  # 2
+                self._robot.data.root_ang_vel_b[:, 2].unsqueeze(1),  # 1
+                torch.cos(bearing).unsqueeze(1),  # 1
+                torch.sin(bearing).unsqueeze(1),  # 1
+                displacement,  # 2
             ],
             dim=1,
         )
@@ -267,8 +265,8 @@ class KingfisherEnv(DirectRLEnv):
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
         bearing = torch.square(torch.atan2(desired_pos_b[:, 1], desired_pos_b[:, 0]))
-        displacement = torch.linalg.norm(self._robot.data.root_pos_w[:,:2] - self._terrain.env_origins[:,:2], dim=1)
-        lin_vel = torch.linalg.norm(self._robot.data.root_lin_vel_b[:,:2], dim=1)
+        displacement = torch.linalg.norm(self._robot.data.root_pos_w[:, :2] - self._terrain.env_origins[:, :2], dim=1)
+        lin_vel = torch.linalg.norm(self._robot.data.root_lin_vel_b[:, :2], dim=1)
 
         rewards = {
             "bearing": bearing * self.cfg.bearing_reward_scale,
@@ -317,7 +315,7 @@ class KingfisherEnv(DirectRLEnv):
 
         self._actions[env_ids] = 0.0
         # Sample new commands
-        angle = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi/4, torch.pi/4)
+        angle = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi / 4, torch.pi / 4)
         self._desired_pos_w[env_ids, 0] = torch.cos(angle)
         self._desired_pos_w[env_ids, 1] = torch.sin(angle)
         self._desired_pos_w[env_ids, 2] = 0.0
