@@ -53,7 +53,9 @@ class KingfisherEnvWindow(BaseEnvWindow):
 class KingfisherEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 30.0
-    decimation = 3
+    physics_dt = 1 / 100.0 # 100 Hz
+    decimation = 5
+    step_dt = physics_dt * decimation # 20 Hz
     action_space = 2
     observation_space = 8
     state_space = 0
@@ -63,7 +65,7 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 60,
+        dt=physics_dt,
         render_interval=decimation,
         disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
@@ -199,7 +201,7 @@ class KingfisherEnv(DirectRLEnv):
         self._hydrodynamics = Hydrodynamics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrodynamics_cfg)
 
         self._thruster_dynamics = PropellerActuator(
-            num_envs=self.num_envs, device=self.device, dt=cfg.sim.dt, cfg=self.cfg.propeller_cfg
+            num_envs=self.num_envs, device=self.device, dt=cfg.step_dt, cfg=self.cfg.propeller_cfg
         )
 
         # Buffers

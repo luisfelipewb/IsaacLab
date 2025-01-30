@@ -38,7 +38,7 @@ KINGFISHER_CFG = ArticulationCfg(
         copy_from_source=False,
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.2),
+        pos=(0.0, 0.0, 0.12),
         joint_pos={
             ".*": 0.0,
         },
