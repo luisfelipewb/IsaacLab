@@ -361,6 +361,9 @@ class KingfisherEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
 
+        # Make sure the buffers are updated after _apply_action
+        self._get_observations()
+
         # Finish episode if the goal is reached
         done = torch.zeros_like(time_out)
         done[self.distance < self.cfg.goal_reached_threshold] = True
