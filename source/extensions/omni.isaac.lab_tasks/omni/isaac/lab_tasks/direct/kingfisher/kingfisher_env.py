@@ -20,7 +20,7 @@ from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.sim import SimulationCfg
 from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.utils.math import quat_from_euler_xyz, quat_mul, subtract_frame_transforms, yaw_quat
+from omni.isaac.lab.utils.math import subtract_frame_transforms
 
 ##
 # Pre-defined configs
@@ -53,9 +53,9 @@ class KingfisherEnvWindow(BaseEnvWindow):
 class KingfisherEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 30.0
-    physics_dt = 1 / 100.0 # 100 Hz
+    physics_dt = 1 / 100.0  # 100 Hz
     decimation = 5
-    step_dt = physics_dt * decimation # 20 Hz
+    step_dt = physics_dt * decimation  # 20 Hz
     action_space = 2
     observation_space = 8
     state_space = 0
@@ -140,7 +140,7 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
         19.5,  # 1.0
     ]
     propeller_cfg.forces_right = propeller_cfg.forces_left
-    max_energy = 2.0 # Max of 1.0 per thruster
+    max_energy = 2.0  # Max of 1.0 per thruster
 
     # reward scales
     distance_reward_scale = 0.0
@@ -314,8 +314,8 @@ class KingfisherEnv(DirectRLEnv):
         distance_progress_reward = distance_progress_norm * self.cfg.distance_progress_reward_scale
 
         # Bearing progress
-        bearing_progress_norm = self.bearing_progress / torch.abs(self.initial_bearing).clamp(min=0.0174533) #1 degree
-        bearing_progress_norm = torch.clamp(bearing_progress_norm, -1.0, 1.0) # Not very elegant. Better way?
+        bearing_progress_norm = self.bearing_progress / torch.abs(self.initial_bearing).clamp(min=0.0174533)  # 1 degree
+        bearing_progress_norm = torch.clamp(bearing_progress_norm, -1.0, 1.0)  # Not very elegant. Better way?
         bearing_progress_reward = self.cfg.bearing_progress_reward_scale * bearing_progress_norm
         # Zero out the reward if the distance is small
         bearing_progress_reward[self.distance < 0.5] = 0.0
@@ -337,7 +337,7 @@ class KingfisherEnv(DirectRLEnv):
         k1 = -10.0
         k2 = -2.0
         bearing_norm = (torch.exp(k1 * torch.abs(self.bearing)) + torch.exp(k2 * torch.abs(self.bearing)) - 2) / 2
-        bearing_penalty = bearing_penalty = bearing_norm * self.cfg.bearing_penalty_scale
+        bearing_penalty = bearing_norm * self.cfg.bearing_penalty_scale
         # Penalize bearing errors (linear)
         bearing_penalty = torch.abs(self.bearing) * self.cfg.bearing_penalty_scale
 
@@ -386,7 +386,9 @@ class KingfisherEnv(DirectRLEnv):
         self.extras["log"].update(extras)
         extras = dict()
         extras["Episode_Termination/done"] = torch.count_nonzero(self.reset_terminated[env_ids]).item() / len(env_ids)
-        extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item() / len(env_ids)
+        extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item() / len(
+            env_ids
+        )
         extras["Metrics/final_distance_to_goal"] = final_distance_to_goal.item()
         extras["Metrics/final_bearing_to_goal"] = final_bearing_to_goal.item()
         extras["Metrics/final_energy"] = final_energy.item()
@@ -400,7 +402,9 @@ class KingfisherEnv(DirectRLEnv):
 
         self._actions[env_ids] = 0.0
         # Sample new commands
-        self.initial_bearing[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi / 3, torch.pi / 3)
+        self.initial_bearing[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(
+            -torch.pi / 3, torch.pi / 3
+        )
         # self.initial_bearing[env_ids] = torch.pi/10
         self.bearing[env_ids] = self.initial_bearing[env_ids]
         self.previous_bearing = self.initial_bearing[env_ids]
@@ -411,7 +415,7 @@ class KingfisherEnv(DirectRLEnv):
         self.previous_distance[env_ids] = self.initial_distance[env_ids]
         self._desired_pos_w[env_ids, 0] = torch.cos(self.initial_bearing[env_ids]) * self.initial_distance[env_ids]
         self._desired_pos_w[env_ids, 1] = torch.sin(self.initial_bearing[env_ids]) * self.initial_distance[env_ids]
-        self._desired_pos_w[env_ids, 2] = 0.0 # only in 2D
+        self._desired_pos_w[env_ids, 2] = 0.0  # only in 2D
         self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
