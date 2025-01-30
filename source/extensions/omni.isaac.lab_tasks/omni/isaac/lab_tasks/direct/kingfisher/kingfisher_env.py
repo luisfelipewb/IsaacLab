@@ -140,19 +140,20 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
         19.5,  # 1.0
     ]
     propeller_cfg.forces_right = propeller_cfg.forces_left
+    max_energy = 2.0 # Max of 1.0 per thruster
 
     # reward scales
     distance_reward_scale = 0.0
     distance_progress_reward_scale = 10.0
-    bearing_reward_scale = 0.0
-    bearing_progress_reward_scale = 10.0
+    bearing_progress_reward_scale = 0.0
 
     goal_reached_threshold = 0.1
-    goal_reached_scale = 80.0
+    goal_reached_scale = 100.0
 
-    energy_penalty_scale = -0.001
+    energy_penalty_scale = -0.1
     backwards_penalty_scale = -1.0
     time_penalty_scale = -1.0
+    bearing_penalty_scale = -0.01
 
 
 class KingfisherEnv(DirectRLEnv):
@@ -171,14 +172,12 @@ class KingfisherEnv(DirectRLEnv):
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
-                # "distance",
-                "distance_progress",
-                # "bearing",
-                "bearing_progress",
-                "goal_reached",
-                "energy",
-                "time",
-                "backwards",
+                "1_distance_progress",
+                "2_goal_reached",
+                "3_energy",
+                "4_backwards",
+                "5_bearing_penalty",
+                "6_time",
             ]
         }
         # Get specific body indices
@@ -208,10 +207,12 @@ class KingfisherEnv(DirectRLEnv):
         self.distance = torch.zeros(self.num_envs, device=self.device)
         self.previous_distance = torch.zeros(self.num_envs, device=self.device)
         self.distance_progress = torch.zeros(self.num_envs, device=self.device)
+        self.initial_distance = torch.zeros(self.num_envs, device=self.device)
 
         self.bearing = torch.zeros(self.num_envs, device=self.device)
         self.previous_bearing = torch.zeros(self.num_envs, device=self.device)
         self.bearing_progress = torch.zeros(self.num_envs, device=self.device)
+        self.initial_bearing = torch.zeros(self.num_envs, device=self.device)
 
         self.energy = torch.zeros(self.num_envs, device=self.device)
         self.desired_pos_b = torch.zeros(self.num_envs, 2, device=self.device)
@@ -287,7 +288,7 @@ class KingfisherEnv(DirectRLEnv):
         # Bearing
         self.previous_bearing = self.bearing.clone()
         self.bearing = torch.atan2(self.desired_pos_b[:, 1], self.desired_pos_b[:, 0])
-        self.bearing_progress = self.bearing - self.previous_bearing
+        self.bearing_progress = self.previous_bearing - self.bearing
 
         # Energy
         self.energy = torch.sum(torch.square(self._actions), dim=1)
@@ -309,34 +310,47 @@ class KingfisherEnv(DirectRLEnv):
     def _get_rewards(self) -> torch.Tensor:
 
         # Distance progress
-        distance_progress_reward = self.distance_progress * self.cfg.distance_progress_reward_scale
+        distance_progress_norm = self.distance_progress / torch.abs(self.initial_distance)
+        distance_progress_reward = distance_progress_norm * self.cfg.distance_progress_reward_scale
 
         # Bearing progress
-        bearing_progress_reward = self.cfg.bearing_progress_reward_scale * self.bearing_progress
+        bearing_progress_norm = self.bearing_progress / torch.abs(self.initial_bearing).clamp(min=0.0174533) #1 degree
+        bearing_progress_norm = torch.clamp(bearing_progress_norm, -1.0, 1.0) # Not very elegant. Better way?
+        bearing_progress_reward = self.cfg.bearing_progress_reward_scale * bearing_progress_norm
+        # Zero out the reward if the distance is small
+        bearing_progress_reward[self.distance < 0.5] = 0.0
 
         # Reached goal
         goal_reward = torch.zeros(self.num_envs, device=self.device)
         goal_reward[self.distance < self.cfg.goal_reached_threshold] = self.cfg.goal_reached_scale
-        # print(f"goal {type(goal_reward)} {goal_reward.shape}")
 
         # Reduce energy consumption
-        energy_reward = self.cfg.energy_penalty_scale * self.energy / 2
+        energy_norm = self.energy * self.step_dt / self.cfg.max_energy
+        energy_reward = self.cfg.energy_penalty_scale * energy_norm
 
         # Penalize going backwards
         backwards_penalty = torch.zeros(self.num_envs, device=self.device)
         root_lin_vel_b_x = self._robot.data.root_lin_vel_b[:, 0]
         backwards_penalty[root_lin_vel_b_x < 0.0] = self.cfg.backwards_penalty_scale
 
+        # Penalize bearing errors (exponential)
+        k1 = -10.0
+        k2 = -2.0
+        bearing_norm = (torch.exp(k1 * torch.abs(self.bearing)) + torch.exp(k2 * torch.abs(self.bearing)) - 2) / 2
+        bearing_penalty = bearing_penalty = bearing_norm * self.cfg.bearing_penalty_scale
+        # Penalize bearing errors (linear)
+        bearing_penalty = torch.abs(self.bearing) * self.cfg.bearing_penalty_scale
+
         # Time
-        time_reward = torch.ones(self.num_envs, device=self.device) * self.cfg.time_penalty_scale * self.cfg.sim.dt
+        time_reward = torch.ones(self.num_envs, device=self.device) * self.cfg.time_penalty_scale * self.step_dt
 
         rewards = {
-            "distance_progress": distance_progress_reward,
-            "bearing_progress": bearing_progress_reward,
-            "goal_reached": goal_reward,
-            "energy": energy_reward,
-            "backwards": backwards_penalty,
-            "time": time_reward,
+            "1_distance_progress": distance_progress_reward,
+            "2_goal_reached": goal_reward,
+            "3_energy": energy_reward,
+            "4_backwards": backwards_penalty,
+            "5_bearing_penalty": bearing_penalty,
+            "6_time": time_reward,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
@@ -368,8 +382,8 @@ class KingfisherEnv(DirectRLEnv):
         self.extras["log"] = dict()
         self.extras["log"].update(extras)
         extras = dict()
-        extras["Episode_Termination/done"] = torch.count_nonzero(self.reset_terminated[env_ids]).item()
-        extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item()
+        extras["Episode_Termination/done"] = torch.count_nonzero(self.reset_terminated[env_ids]).item() / len(env_ids)
+        extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item() / len(env_ids)
         extras["Metrics/final_distance_to_goal"] = final_distance_to_goal.item()
         extras["Metrics/final_bearing_to_goal"] = final_bearing_to_goal.item()
         extras["Metrics/final_energy"] = final_energy.item()
@@ -383,13 +397,18 @@ class KingfisherEnv(DirectRLEnv):
 
         self._actions[env_ids] = 0.0
         # Sample new commands
-        angle = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi / 3, torch.pi / 3)
-        # angle[:] = torch.pi/10
-        dist = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(3.0, 9.0)
-        # dist = 5.0
-        self._desired_pos_w[env_ids, 0] = torch.cos(angle) * dist
-        self._desired_pos_w[env_ids, 1] = torch.sin(angle) * dist
-        self._desired_pos_w[env_ids, 2] = 0.0
+        self.initial_bearing[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(-torch.pi / 3, torch.pi / 3)
+        # self.initial_bearing[env_ids] = torch.pi/10
+        self.bearing[env_ids] = self.initial_bearing[env_ids]
+        self.previous_bearing = self.initial_bearing[env_ids]
+
+        self.initial_distance[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(3.0, 9.0)
+        # self.initial_distance[env_ids] = 5.0
+        self.distance[env_ids] = self.initial_distance[env_ids]
+        self.previous_distance[env_ids] = self.initial_distance[env_ids]
+        self._desired_pos_w[env_ids, 0] = torch.cos(self.initial_bearing[env_ids]) * self.initial_distance[env_ids]
+        self._desired_pos_w[env_ids, 1] = torch.sin(self.initial_bearing[env_ids]) * self.initial_distance[env_ids]
+        self._desired_pos_w[env_ids, 2] = 0.0 # only in 2D
         self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
