@@ -41,7 +41,7 @@ import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg
 from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
 from omni.isaac.lab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
-from omni.isaac.lab.physics.thruster_dynamics import DynamicsFirstOrder, DynamicsFirstOrderCfg
+from omni.isaac.lab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
 from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
 from omni.isaac.lab.sim import SimulationContext
 from omni.isaac.lab.utils import configclass
@@ -75,11 +75,54 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot = scene["kingfisher"]
 
     # Initialize the hydrodynamics and hydrostatics
-    hydrostatics = Hydrostatics(num_envs=scene.num_envs, device=robot.device, cfg=HydrostaticsCfg())
-    hydrodynamics = Hydrodynamics(num_envs=scene.num_envs, device=robot.device, cfg=HydrodynamicsCfg())
+    hydrostatics_cfg = HydrostaticsCfg()
+    hydrostatics_cfg.mass = 35.0  # Kg considering added sensors
+    hydrostatics_cfg.width = 1.0  # Kingfisher/Heron width 1.0m in Spec Sheet
+    hydrostatics_cfg.length = 1.3  # Kingfisher/Heron length 1.3m in Spec Sheet
+    hydrostatics_cfg.waterplane_area = 0.33  # 0.15 width * 1.1 length * 2 hulls
+    hydrostatics_cfg.draught_offset = 0.21986  # Distance from base_link to bottom of the hull
+    hydrostatics_cfg.max_draught = 0.20  # Kingfisher/Heron draught 120mm in Spec Sheet
+    hydrostatics_cfg.average_hydrostatics_force = 275.0
+    hydrostatics = Hydrostatics(num_envs=scene.num_envs, device=robot.device, cfg=hydrostatics_cfg)
 
-    thruster_cfg = DynamicsFirstOrderCfg()
-    thruster_dynamics = DynamicsFirstOrder(num_envs=scene.num_envs, device=robot.device, dt=sim_dt, cfg=thruster_cfg)
+    hydrodynamics_cfg= HydrodynamicsCfg()
+    hydrodynamics_cfg.linear_damping = [0.0, 99.99, 99.99, 13.0, 13.0, 5.83]
+    hydrodynamics_cfg.quadratic_damping = [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
+    hydrodynamics_cfg.use_drag_randomization = False
+    hydrodynamics_cfg.linear_damping_rand = [0.1, 0.1, 0.0, 0.0, 0.0, 0.1]
+    hydrodynamics_cfg.quadratic_damping_rand = [0.1, 0.1, 0.0, 0.0, 0.0, 0.1]
+    hydrodynamics = Hydrodynamics(num_envs=scene.num_envs, device=robot.device, cfg=hydrodynamics_cfg)
+
+    propeller_cfg = PropellerActuatorCfg()
+    propeller_cfg.cmd_lower_range = -1.0
+    propeller_cfg.cmd_upper_range = 1.0
+    propeller_cfg.command_rate = (propeller_cfg.cmd_upper_range - propeller_cfg.cmd_lower_range) / 2.0
+    propeller_cfg.forces_left = [
+        -4.0,  # -1.0
+        -4.0,  # -0.9
+        -4.0,  # -0.8
+        -4.0,  # -0.7
+        -2.0,  # -0.6
+        -1.0,  # -0.5
+        0.0,  # -0.4
+        0.0,  # -0.3
+        0.0,  # -0.2
+        0.0,  # -0.1
+        0.0,  # 0.0
+        0.0,  # 0.1
+        0.0,  # 0.2
+        0.5,  # 0.3
+        1.5,  # 0.4
+        4.75,  # 0.5
+        8.25,  # 0.6
+        16.0,  # 0.7
+        19.5,  # 0.8
+        19.5,  # 0.9
+        19.5,  # 1.0
+    ]
+    propeller_cfg.forces_right = propeller_cfg.forces_left
+    thruster_dynamics = PropellerActuator(num_envs=scene.num_envs, device=scene.device, dt=sim_dt, cfg=propeller_cfg)
+    # thruster_dynamics = PropellerActuator(num_envs=scene.num_envs, device=robot.device, dt=sim_dt, cfg=thruster_cfg)
     thruster_forces = torch.zeros((scene.num_envs, 1, 6), device=robot.device, dtype=torch.float32)
 
     count = 0
@@ -137,7 +180,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # Expand the thrust commands in the first dimension to match the number of environments.
         thrust_cmds = thrust_cmds.unsqueeze(0).expand(scene.num_envs, -1)
 
-        thruster_dynamics.set_target_force(thrust_cmds)
+        thruster_dynamics.set_target_cmd(thrust_cmds)
         thruster_forces[:, 0, :] = thruster_dynamics.update_forces()
 
         torque = torch.zeros_like(torque)
