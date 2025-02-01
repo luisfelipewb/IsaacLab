@@ -150,10 +150,17 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     goal_reached_threshold = 0.1
     goal_reached_scale = 100.0
 
-    energy_penalty_scale = -0.1
-    backwards_penalty_scale = -1.0
+    energy_penalty_scale = -0.001
+    backwards_penalty_scale = -10.0
     time_penalty_scale = -1.0
-    bearing_penalty_scale = -0.01
+    bearing_penalty_scale = 1.0
+    beargin_penalty_coef = -4.0
+
+    # Environment
+    min_target_distance = 1.0
+    max_target_distance = 10.0
+    min_target_bearing = -torch.pi / 2
+    max_target_bearing = torch.pi / 2
 
 
 class KingfisherEnv(DirectRLEnv):
@@ -279,19 +286,8 @@ class KingfisherEnv(DirectRLEnv):
             self._robot.data.root_link_state_w[:, :3], self._robot.data.root_link_state_w[:, 3:7], self._desired_pos_w
         )
         self.desired_pos_b[:, :2] = self.desired_pos_b_3d[:, :2]
-
-        # Distance
-        self.previous_distance = self.distance.clone()
         self.distance = torch.linalg.norm(self.desired_pos_b, dim=1)
-        self.distance_progress = self.previous_distance - self.distance
-
-        # Bearing
-        self.previous_bearing = self.bearing.clone()
         self.bearing = torch.atan2(self.desired_pos_b[:, 1], self.desired_pos_b[:, 0])
-        self.bearing_progress = self.previous_bearing - self.bearing
-
-        # Energy
-        self.energy = torch.sum(torch.square(self._actions), dim=1)
 
         obs = torch.cat(
             [
@@ -310,15 +306,13 @@ class KingfisherEnv(DirectRLEnv):
     def _get_rewards(self) -> torch.Tensor:
 
         # Distance progress
+        self.distance_progress = self.previous_distance - self.distance
         distance_progress_norm = self.distance_progress / torch.abs(self.initial_distance)
         distance_progress_reward = distance_progress_norm * self.cfg.distance_progress_reward_scale
+        self.previous_distance = self.distance.clone()
 
-        # Bearing progress
-        bearing_progress_norm = self.bearing_progress / torch.abs(self.initial_bearing).clamp(min=0.0174533)  # 1 degree
-        bearing_progress_norm = torch.clamp(bearing_progress_norm, -1.0, 1.0)  # Not very elegant. Better way?
-        bearing_progress_reward = self.cfg.bearing_progress_reward_scale * bearing_progress_norm
-        # Zero out the reward if the distance is small
-        bearing_progress_reward[self.distance < 0.5] = 0.0
+        # Energy
+        self.energy = torch.sum(torch.square(self._actions), dim=1)
 
         # Reached goal
         goal_reward = torch.zeros(self.num_envs, device=self.device)
@@ -333,13 +327,11 @@ class KingfisherEnv(DirectRLEnv):
         root_lin_vel_b_x = self._robot.data.root_lin_vel_b[:, 0]
         backwards_penalty[root_lin_vel_b_x < 0.0] = self.cfg.backwards_penalty_scale
 
-        # Penalize bearing errors (exponential)
-        k1 = -10.0
-        k2 = -2.0
-        bearing_norm = (torch.exp(k1 * torch.abs(self.bearing)) + torch.exp(k2 * torch.abs(self.bearing)) - 2) / 2
-        bearing_penalty = bearing_norm * self.cfg.bearing_penalty_scale
-        # Penalize bearing errors (linear)
-        bearing_penalty = torch.abs(self.bearing) * self.cfg.bearing_penalty_scale
+        # Penalize bearing errors
+        bearing_penalty = torch.exp(self.cfg.beargin_penalty_coef * torch.abs(self.bearing)) - 1
+        bearing_penalty = self.cfg.bearing_penalty_scale * bearing_penalty
+        # Don't penalize if too close to the goal as the bearing becomes unstable
+        # bearing_penalty[self.distance < 0.2] = 0.0
 
         # Time
         time_reward = torch.ones(self.num_envs, device=self.device) * self.cfg.time_penalty_scale * self.step_dt
@@ -361,8 +353,13 @@ class KingfisherEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
 
-        # Make sure the buffers are updated after _apply_action
-        self._get_observations()
+        # Desired position in the robot frame (2D)
+        self.desired_pos_b_3d, _ = subtract_frame_transforms(
+            self._robot.data.root_link_state_w[:, :3], self._robot.data.root_link_state_w[:, 3:7], self._desired_pos_w
+        )
+        self.desired_pos_b[:, :2] = self.desired_pos_b_3d[:, :2]
+        self.distance = torch.linalg.norm(self.desired_pos_b, dim=1)
+        self.bearing = torch.atan2(self.desired_pos_b[:, 1], self.desired_pos_b[:, 0])
 
         # Finish episode if the goal is reached
         done = torch.zeros_like(time_out)
@@ -401,16 +398,16 @@ class KingfisherEnv(DirectRLEnv):
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
         self._actions[env_ids] = 0.0
-        # Sample new commands
+        # Sample new goal position
         self.initial_bearing[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(
-            -torch.pi / 3, torch.pi / 3
+            self.cfg.min_target_bearing, self.cfg.max_target_bearing
         )
-        # self.initial_bearing[env_ids] = torch.pi/10
         self.bearing[env_ids] = self.initial_bearing[env_ids]
         self.previous_bearing = self.initial_bearing[env_ids]
 
-        self.initial_distance[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(3.0, 9.0)
-        # self.initial_distance[env_ids] = 5.0
+        self.initial_distance[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(
+            self.cfg.min_target_distance, self.cfg.max_target_distance
+        )
         self.distance[env_ids] = self.initial_distance[env_ids]
         self.previous_distance[env_ids] = self.initial_distance[env_ids]
         self._desired_pos_w[env_ids, 0] = torch.cos(self.initial_bearing[env_ids]) * self.initial_distance[env_ids]
