@@ -53,8 +53,8 @@ class KingfisherEnvWindow(BaseEnvWindow):
 class KingfisherEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 30.0
-    physics_dt = 1 / 100.0  # 100 Hz
-    decimation = 5
+    physics_dt = 1 / 60.0  # 60 Hz
+    decimation = 3
     step_dt = physics_dt * decimation  # 20 Hz
     action_space = 2
     observation_space = 8
