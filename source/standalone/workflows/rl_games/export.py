@@ -42,33 +42,29 @@ import math
 import os
 import torch
 
+from rl_games.algos_torch import flatten
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.player import BasePlayer
 from rl_games.torch_runner import Runner
 
-from omni.isaac.lab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from omni.isaac.lab.utils.assets import retrieve_file_path
-from omni.isaac.lab.utils.dict import print_dict
 
-import omni.isaac.lab_tasks  # noqa: F401
 from omni.isaac.lab_tasks.utils import get_checkpoint_path, load_cfg_from_registry, parse_env_cfg
 from omni.isaac.lab_tasks.utils.wrappers.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
 
-import rl_games.algos_torch.flatten as flatten
 
 class ModelWrapper(torch.nn.Module):
-    '''
+    """
     Main idea is to ignore outputs which we don't need from model
-    '''
+    """
+
     def __init__(self, model):
         super().__init__()
         self._model = model
 
     def forward(self, input_dict):
-        input_dict['obs'] = self._model.norm_obs(input_dict['obs'])
-        
-        print(f"input_dict {input_dict}")
-        input_dict['is_train'] = False
+        input_dict["obs"] = self._model.norm_obs(input_dict["obs"])
+        input_dict["is_train"] = False
         return self._model.a2c_network(input_dict)
 
 
@@ -98,7 +94,9 @@ def main():
         resume_path = get_checkpoint_path(log_root_path, run_dir, checkpoint_file, other_dirs=["nn"])
     else:
         resume_path = retrieve_file_path(args_cli.checkpoint)
-    log_dir = os.path.dirname(os.path.dirname(resume_path))
+
+    # Replace the .pth extension with .onnx
+    output_path = resume_path.replace(".pth", ".onnx")
 
     # wrap around environment for rl-games
     rl_device = agent_cfg["params"]["config"]["device"]
@@ -107,8 +105,6 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
-
-
 
     # wrap around environment for rl-games
     env = RlGamesVecEnvWrapper(env, rl_device, clip_obs, clip_actions)
@@ -123,49 +119,33 @@ def main():
     # load previously trained model
     agent_cfg["params"]["load_checkpoint"] = True
     agent_cfg["params"]["load_path"] = resume_path
+    agent_cfg["params"]["config"]["num_actors"] = 1  # single environment only
     print(f"[INFO]: Loading model checkpoint from: {agent_cfg['params']['load_path']}")
-
-    # set number of actors into agent config
-    agent_cfg["params"]["config"]["num_actors"] = env.unwrapped.num_envs
     # create runner from rl-games
     runner = Runner()
     runner.load(agent_cfg)
     # obtain the agent from the runner
     agent: BasePlayer = runner.create_player()
     agent.restore(resume_path)
-    agent.reset()
 
-    # reset environment
-    obs = env.reset()
-    if isinstance(obs, dict):
-        obs = obs["obs"]
-    # required: enables the flag for batched observations
-    _ = agent.get_batch_size(obs, 1)
-    # initialize RNN states if used
-    print(f"[INFO] Is RNN: {agent.is_rnn}")
-    if agent.is_rnn:
-        agent.init_rnn()
-    # simulate environment
-    # note: We simplified the logic in rl-games player.py (:func:`BasePlayer.run()`) function in an
-    #   attempt to have complete control over environment stepping. However, this removes other
-    #   operations such as masking that is used for multi-agent learning by RL-Games.
-
-    # Print the observation of the environment 
-    print(f"[INFO] Observation: {obs}")
-
+    # Prepare model for export
     inputs = {
-        'obs' : torch.zeros((1,) + agent.obs_shape).to(agent.device),
-        'rnn_states' : agent.states,
+        "obs": torch.zeros((1,) + agent.obs_shape).to(agent.device),
+        "rnn_states": agent.states,
     }
-
     with torch.no_grad():
         adapter = flatten.TracingAdapter(ModelWrapper(agent.model), inputs, allow_non_tensor=True)
         traced = torch.jit.trace(adapter, adapter.flattened_inputs, check_trace=False)
-        flattened_outputs = traced(*adapter.flattened_inputs)
-        print(f"flattened_outputs {flattened_outputs}")
-    
 
-    torch.onnx.export(traced, *adapter.flattened_inputs, "model.onnx", verbose=True, input_names=['obs'], output_names=['mu','log_std', 'value'])
+    torch.onnx.export(
+        traced,
+        *adapter.flattened_inputs,
+        output_path,
+        verbose=False,
+        input_names=["obs"],
+        output_names=["mu", "log_std", "value"],
+    )
+    print(f"Model exported to {output_path}")
     env.close()
 
 
