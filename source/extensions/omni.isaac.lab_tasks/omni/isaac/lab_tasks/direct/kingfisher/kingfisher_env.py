@@ -254,21 +254,22 @@ class KingfisherEnv(DirectRLEnv):
         # thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=self.device)
         self._thruster_dynamics.set_target_cmd(self._actions)
 
+    def _apply_action(self):
         # Compute the hydrostatic and hydrodynamic forces
         robot_pos = self._robot.data.root_pos_w.clone()
         robot_quat = self._robot.data.root_quat_w.clone()
         robot_vel = self._robot.data.root_vel_w.clone()
+
         self._hydrostatic_force[:, 0, :] = self._hydrostatics.compute_archimedes_metacentric_local(
             robot_pos, robot_quat
         )
         self._hydrodynamic_force[:, 0, :] = self._hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
-
-    def _apply_action(self):
         combined = self._hydrostatic_force + self._hydrodynamic_force
         self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
 
-        # only apply thruster forces if they are not zero, otherwise it disables external previous forces.
+        # Update the thruster forces
         self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
+        # only apply thruster forces if they are not zero, otherwise it disables external previous forces.
         lft_thruster_force = self._thruster_forces[..., :3]
         rgt_thruster_force = self._thruster_forces[..., 3:]
         if lft_thruster_force.any():
