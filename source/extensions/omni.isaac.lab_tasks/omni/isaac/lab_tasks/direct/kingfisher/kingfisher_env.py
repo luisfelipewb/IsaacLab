@@ -52,7 +52,7 @@ class KingfisherEnvWindow(BaseEnvWindow):
 @configclass
 class KingfisherEnvCfg(DirectRLEnvCfg):
     # env
-    episode_length_s = 30.0
+    episode_length_s = 60.0
     physics_dt = 1 / 60.0  # 60 Hz
     decimation = 3
     step_dt = physics_dt * decimation  # 20 Hz
@@ -151,7 +151,10 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     goal_reached_scale = 100.0
 
     energy_penalty_scale = -0.001
-    backwards_penalty_scale = -10.0
+    velocity_penalty_scale = -10.0
+    velocity_lower_bound = -0.05
+    velocity_upper_bound = 0.7
+    velocity_sigmoid_scale = 100.0  # Higher for sharper sigmoid
     time_penalty_scale = -1.0
     bearing_penalty_scale = 1.0
     beargin_penalty_coef = -4.0
@@ -159,8 +162,8 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     # Environment
     min_target_distance = 1.0
     max_target_distance = 10.0
-    min_target_bearing = -torch.pi / 2
-    max_target_bearing = torch.pi / 2
+    min_target_bearing = -torch.pi
+    max_target_bearing = torch.pi
 
 
 class KingfisherEnv(DirectRLEnv):
@@ -182,7 +185,7 @@ class KingfisherEnv(DirectRLEnv):
                 "1_distance_progress",
                 "2_goal_reached",
                 "3_energy",
-                "4_backwards",
+                "4_velocity",
                 "5_bearing_penalty",
                 "6_time",
             ]
@@ -322,10 +325,15 @@ class KingfisherEnv(DirectRLEnv):
         energy_norm = self.energy * self.step_dt / self.cfg.max_energy
         energy_reward = self.cfg.energy_penalty_scale * energy_norm
 
-        # Penalize going backwards
-        backwards_penalty = torch.zeros(self.num_envs, device=self.device)
+        # Penalize range of velocities
         root_lin_vel_b_x = self._robot.data.root_lin_vel_b[:, 0]
-        backwards_penalty[root_lin_vel_b_x < 0.0] = self.cfg.backwards_penalty_scale
+        velocity_penalty = torch.zeros(self.num_envs, device=self.device)
+        # Sigmoid function to penalize low velocities
+        sig_low = torch.sigmoid(-self.cfg.velocity_sigmoid_scale * (root_lin_vel_b_x - self.cfg.velocity_lower_bound))
+        # Sigmoid function to penalize high velocities
+        sig_high = torch.sigmoid(self.cfg.velocity_sigmoid_scale * (root_lin_vel_b_x - self.cfg.velocity_upper_bound))
+        # Combine the two sigmoid functions
+        velocity_penalty = self.cfg.velocity_penalty_scale * (sig_low + sig_high)
 
         # Penalize bearing errors
         bearing_penalty = torch.exp(self.cfg.beargin_penalty_coef * torch.abs(self.bearing)) - 1
@@ -340,7 +348,7 @@ class KingfisherEnv(DirectRLEnv):
             "1_distance_progress": distance_progress_reward,
             "2_goal_reached": goal_reward,
             "3_energy": energy_reward,
-            "4_backwards": backwards_penalty,
+            "4_velocity": velocity_penalty,
             "5_bearing_penalty": bearing_penalty,
             "6_time": time_reward,
         }
