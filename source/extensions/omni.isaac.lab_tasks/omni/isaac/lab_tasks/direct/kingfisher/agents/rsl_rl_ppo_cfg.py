@@ -17,7 +17,7 @@ class KingfisherPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 48
     max_iterations = 200
     save_interval = 50
-    experiment_name = "quadcopter_direct"
+    experiment_name = "kingfisher_direct"
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
