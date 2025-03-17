@@ -53,9 +53,9 @@ class KingfisherEnvWindow(BaseEnvWindow):
 class KingfisherEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 60.0
-    physics_dt = 1 / 60.0  # 60 Hz
-    decimation = 3
-    step_dt = physics_dt * decimation  # 20 Hz
+    physics_dt = 1 / 50.0  # 50 Hz
+    decimation = 5
+    step_dt = physics_dt * decimation  # 10 Hz
     action_space = 2
     observation_space = 8
     state_space = 0
@@ -210,7 +210,7 @@ class KingfisherEnv(DirectRLEnv):
         self._hydrodynamics = Hydrodynamics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrodynamics_cfg)
 
         self._thruster_dynamics = PropellerActuator(
-            num_envs=self.num_envs, device=self.device, dt=cfg.step_dt, cfg=self.cfg.propeller_cfg
+            num_envs=self.num_envs, device=self.device, dt=cfg.physics_dt, cfg=self.cfg.propeller_cfg
         )
 
         # Buffers
@@ -253,7 +253,6 @@ class KingfisherEnv(DirectRLEnv):
         # Compute the thruster forces based on the actions.
         # thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=self.device)
         self._thruster_dynamics.set_target_cmd(self._actions)
-        self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
 
         # Compute the hydrostatic and hydrodynamic forces
         robot_pos = self._robot.data.root_pos_w.clone()
@@ -269,6 +268,7 @@ class KingfisherEnv(DirectRLEnv):
         self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
 
         # only apply thruster forces if they are not zero, otherwise it disables external previous forces.
+        self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
         lft_thruster_force = self._thruster_forces[..., :3]
         rgt_thruster_force = self._thruster_forces[..., 3:]
         if lft_thruster_force.any():
