@@ -17,6 +17,8 @@ class PropellerActuatorCfg:
     command_rate: float = MISSING  # Frequency of command updates in Hz
     forces: list = MISSING  # Forces for the thruster
     interp_resolution: int = 1001
+    enable_randomization: bool = True
+    randomization_range: float = 0.1  # Percentage of randomization on the forces
 
 
 class PropellerActuator:
@@ -48,6 +50,7 @@ class PropellerActuator:
         self.dt = dt
         self.cfg = cfg
 
+        self._ALL_INDICES = torch.arange(self.num_envs, dtype=torch.long, device=device)
         self._max_cmd_delta = cfg.command_rate * dt
         self._interp_scale = cfg.interp_resolution / (cfg.cmd_upper_range - cfg.cmd_lower_range)
 
@@ -56,7 +59,8 @@ class PropellerActuator:
         self.forces = torch.tensor(cfg.forces, device=device)
         self.thruster_forces = torch.zeros((num_envs, 3), device=device)
         self.interp_forces = self.linear_interpolate_1d(self.forces, cfg.interp_resolution)
-        self.reset()
+        self.randomization_factor = torch.ones(self.num_envs, device=self.device, dtype=torch.float32)
+        self.reset(self._ALL_INDICES)
 
     def linear_interpolate_1d(self, x: torch.Tensor, size: int):
         return torch.nn.functional.interpolate(x.view(1, 1, -1), size=size, mode="linear", align_corners=True).squeeze()
@@ -81,7 +85,7 @@ class PropellerActuator:
         delta = torch.clamp(self._target_cmds - self._current_cmds, -self._max_cmd_delta, self._max_cmd_delta)
         self._current_cmds += delta
 
-        self.thruster_forces[:, 0] = self.get_forces()
+        self.thruster_forces[:, 0] = self.get_forces() * self.randomization_factor
         return self.thruster_forces
 
     def set_target_cmd(self, commands):
@@ -93,9 +97,16 @@ class PropellerActuator:
         """
         self._target_cmds = torch.clamp(commands, -1, 1)
 
-    def reset(self):
+    def reset(self, env_ids: torch.Tensor | None):
         """
         Reset the propeller actuator.
         """
-        self._current_cmds[:] = 0.0
-        self._target_cmds[:] = 0.0
+        if env_ids is None or len(env_ids) == self.num_envs:
+            env_ids = self._ALL_INDICES
+
+        if self.cfg.enable_randomization:
+            randomization = torch.rand(len(env_ids), device=self.device) * 2 - 1
+            self.randomization_factor[env_ids] = randomization * self.cfg.randomization_range + 1
+
+        self._current_cmds[env_ids] = 0.0
+        self._target_cmds[env_ids] = 0.0

@@ -122,7 +122,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
             19.5,  # 0.9
             19.5,  # 1.0
         ],
-        interp_resolution=1000,
+        enable_randomization=True,
+        randomization_range=0.2,
     )
 
     thurster_dynamics_left = PropellerActuator(
@@ -158,6 +159,9 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
             robot.write_joint_state_to_sim(joint_pos, joint_vel)
 
             # clear internal buffers
+            thurster_dynamics_left.reset(env_ids=[1, -1])
+            thurster_dynamics_right.reset(env_ids=[1, -1])
+
             scene.reset()
             print("[INFO]: Resetting robot state...")
 
@@ -186,7 +190,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         torque = torque.unsqueeze(1).expand(-1, len(base_link_id), -1)
         robot.set_external_force_and_torque(force, torque, body_ids=base_link_id)
 
-        thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=robot.device)
+        thrust_cmds = torch.tensor([1.0, 1.0], dtype=torch.float32, device=robot.device)
         # Expand the thrust commands in the first dimension to match the number of environments.
         thrust_cmds = thrust_cmds.unsqueeze(0).expand(scene.num_envs, -1)
 
@@ -198,10 +202,11 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # print(f"left_thruster_forces:\n {left_thruster_forces.shape}\n{left_thruster_forces}\n")
         # print(f"right_thruster_forces:\n {right_thruster_forces.shape}\n{right_thruster_forces}\n")
 
+        no_torque = torch.zeros((scene.num_envs, 1, 3), dtype=torch.float32, device=robot.device)
         if left_thruster_forces.any():
-            robot.set_external_force_and_torque(left_thruster_forces, torque, body_ids=left_thruster_id)
+            robot.set_external_force_and_torque(left_thruster_forces, no_torque, body_ids=left_thruster_id)
         if right_thruster_forces.any():
-            robot.set_external_force_and_torque(right_thruster_forces, torque, body_ids=right_thruster_id)
+            robot.set_external_force_and_torque(right_thruster_forces, no_torque, body_ids=right_thruster_id)
 
         scene.write_data_to_sim()
 

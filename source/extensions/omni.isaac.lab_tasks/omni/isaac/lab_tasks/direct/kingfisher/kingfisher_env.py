@@ -143,7 +143,9 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
             19.5,  # 0.9
             19.5,  # 1.0
         ],
-        interp_resolution=1000,
+        interp_resolution=1001,
+        enable_randomization=True,
+        randomization_range=0.1,
     )
 
     max_energy = 2.0  # Max of 1.0 per thruster
@@ -407,6 +409,9 @@ class KingfisherEnv(DirectRLEnv):
         extras["Metrics/final_bearing_to_goal"] = final_bearing_to_goal.item()
         extras["Metrics/final_energy"] = final_energy.item()
         self.extras["log"].update(extras)
+
+        self._thruster_dynamics_left.reset(env_ids)
+        self._thruster_dynamics_right.reset(env_ids)
 
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
