@@ -90,56 +90,62 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     robot: ArticulationCfg = KINGFISHER_CFG.replace(prim_path="/World/envs/env_.*/Robot")
 
     # Hydrostatics
-    hydrostatics_cfg: HydrostaticsCfg = HydrostaticsCfg()
-    hydrostatics_cfg.mass = 35.0  # Kg considering added sensors
-    hydrostatics_cfg.width = 1.0  # Kingfisher/Heron width 1.0m in Spec Sheet
-    hydrostatics_cfg.length = 1.3  # Kingfisher/Heron length 1.3m in Spec Sheet
-    hydrostatics_cfg.waterplane_area = 0.33  # 0.15 width * 1.1 length * 2 hulls
-    hydrostatics_cfg.draught_offset = 0.21986  # Distance from base_link to bottom of the hull
-    hydrostatics_cfg.max_draught = 0.20  # Kingfisher/Heron draught 120mm in Spec Sheet
-    hydrostatics_cfg.average_hydrostatics_force = 275.0
+    hydrostatics_cfg: HydrostaticsCfg = HydrostaticsCfg(
+        mass=35.0,  # Kg considering added sensors
+        width=1.0,  # Kingfisher/Heron width 1.0m in Spec Sheet
+        length=1.3,  # Kingfisher/Heron length 1.3m in Spec Sheet
+        waterplane_area=0.33,  # 0.15 width * 1.1 length * 2 hulls
+        draught_offset=0.21986,  # Distance from base_link to bottom of the hull
+        max_draught=0.20,  # Kingfisher/Heron draught 120mm in Spec Sheet
+        average_hydrostatics_force=275.0,
+    )
 
     # Hydrdynamics
-    hydrodynamics_cfg: HydrodynamicsCfg = HydrodynamicsCfg()
-    # linear Nominal [16.44998712, 15.79776044, 100, 13, 13, 6]
-    # linear SID [0.0, 99.99, 99.99, 13.0, 13.0, 0.82985084]
-    hydrodynamics_cfg.linear_damping = [0.0, 99.99, 99.99, 13.0, 13.0, 5.83]
-    # quadratic Nominal [2.942, 2.7617212, 10, 5, 5, 5]
-    # quadratic SID [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
-    hydrodynamics_cfg.quadratic_damping = [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
-    hydrodynamics_cfg.use_drag_randomization = False
-    hydrodynamics_cfg.linear_damping_rand = [0.1, 0.1, 0.0, 0.0, 0.0, 0.1]
-    hydrodynamics_cfg.quadratic_damping_rand = [0.1, 0.1, 0.0, 0.0, 0.0, 0.1]
+    # Nominal
+    # linear    [16.44998712, 15.79776044, 100, 13, 13, 6]
+    # quadratic [2.942, 2.7617212, 10, 5, 5, 5]
+    # SID
+    # linear    [0.0, 99.99, 99.99, 13.0, 13.0, 0.82985084]
+    # quadratic [17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724]
+    hydrodynamics_cfg: HydrodynamicsCfg = HydrodynamicsCfg(
+        linear_damping=[0.0, 99.99, 99.99, 13.0, 13.0, 5.83],
+        quadratic_damping=[17.257603, 99.99, 10.0, 5.0, 5.0, 17.33600724],
+        use_drag_randomization=False,
+        linear_damping_rand=[0.1, 0.1, 0.0, 0.0, 0.0, 0.1],
+        quadratic_damping_rand=[0.1, 0.1, 0.0, 0.0, 0.0, 0.1],
+    )
 
     # Thruster dynamics
-    propeller_cfg: PropellerActuatorCfg = PropellerActuatorCfg()
-    propeller_cfg.cmd_lower_range = -1.0
-    propeller_cfg.cmd_upper_range = 1.0
-    propeller_cfg.command_rate = (propeller_cfg.cmd_upper_range - propeller_cfg.cmd_lower_range) / 2.0
-    propeller_cfg.forces_left = [
-        -4.0,  # -1.0
-        -4.0,  # -0.9
-        -4.0,  # -0.8
-        -4.0,  # -0.7
-        -2.0,  # -0.6
-        -1.0,  # -0.5
-        0.0,  # -0.4
-        0.0,  # -0.3
-        0.0,  # -0.2
-        0.0,  # -0.1
-        0.0,  # 0.0
-        0.0,  # 0.1
-        0.0,  # 0.2
-        0.5,  # 0.3
-        1.5,  # 0.4
-        4.75,  # 0.5
-        8.25,  # 0.6
-        16.0,  # 0.7
-        19.5,  # 0.8
-        19.5,  # 0.9
-        19.5,  # 1.0
-    ]
-    propeller_cfg.forces_right = propeller_cfg.forces_left
+    propeller_cfg: PropellerActuatorCfg = PropellerActuatorCfg(
+        cmd_lower_range=-1.0,
+        cmd_upper_range=1.0,
+        command_rate=1.0,
+        forces=[
+            -4.0,  # -1.0
+            -4.0,  # -0.9
+            -4.0,  # -0.8
+            -4.0,  # -0.7
+            -2.0,  # -0.6
+            -1.0,  # -0.5
+            0.0,  # -0.4
+            0.0,  # -0.3
+            0.0,  # -0.2
+            0.0,  # -0.1
+            0.0,  # 0.0
+            0.0,  # 0.1
+            0.0,  # 0.2
+            0.5,  # 0.3
+            1.5,  # 0.4
+            4.75,  # 0.5
+            8.25,  # 0.6
+            16.0,  # 0.7
+            19.5,  # 0.8
+            19.5,  # 0.9
+            19.5,  # 1.0
+        ],
+        interp_resolution=1000,
+    )
+
     max_energy = 2.0  # Max of 1.0 per thruster
 
     # reward scales
@@ -202,14 +208,18 @@ class KingfisherEnv(DirectRLEnv):
         # Forces
         self._hydrodynamic_force = torch.zeros(self.num_envs, 1, 6, device=self.device)
         self._hydrostatic_force = torch.zeros(self.num_envs, 1, 6, device=self.device)
-        self._thruster_forces = torch.zeros(self.num_envs, 1, 6, device=self.device)
+        self._thruster_forces_left = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        self._thruster_forces_right = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._no_torque = torch.zeros(self.num_envs, 1, 3, device=self.device)
 
         self._hydrostatics = Hydrostatics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrostatics_cfg)
 
         self._hydrodynamics = Hydrodynamics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrodynamics_cfg)
 
-        self._thruster_dynamics = PropellerActuator(
+        self._thruster_dynamics_left = PropellerActuator(
+            num_envs=self.num_envs, device=self.device, dt=cfg.physics_dt, cfg=self.cfg.propeller_cfg
+        )
+        self._thruster_dynamics_right = PropellerActuator(
             num_envs=self.num_envs, device=self.device, dt=cfg.physics_dt, cfg=self.cfg.propeller_cfg
         )
 
@@ -251,8 +261,8 @@ class KingfisherEnv(DirectRLEnv):
         # self._actions[:,1] = 0.6
 
         # Compute the thruster forces based on the actions.
-        # thrust_cmds = torch.tensor([0.0, 1.0], dtype=torch.float32, device=self.device)
-        self._thruster_dynamics.set_target_cmd(self._actions)
+        self._thruster_dynamics_left.set_target_cmd(self._actions[:, 0])
+        self._thruster_dynamics_right.set_target_cmd(self._actions[:, 1])
 
     def _apply_action(self):
         # Compute the hydrostatic and hydrodynamic forces
@@ -268,17 +278,15 @@ class KingfisherEnv(DirectRLEnv):
         self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
 
         # Update the thruster forces
-        self._thruster_forces[:, 0, :] = self._thruster_dynamics.update_forces()
-        # only apply thruster forces if they are not zero, otherwise it disables external previous forces.
-        lft_thruster_force = self._thruster_forces[..., :3]
-        rgt_thruster_force = self._thruster_forces[..., 3:]
-        if lft_thruster_force.any():
+        self._thruster_forces_left[:, 0] = self._thruster_dynamics_left.update_forces()
+        self._thruster_forces_right[:, 0] = self._thruster_dynamics_right.update_forces()
+        if self._thruster_forces_left.any():
             self._robot.set_external_force_and_torque(
-                lft_thruster_force, self._no_torque, body_ids=self._left_thruster_id
+                self._thruster_forces_left, self._no_torque, body_ids=self._left_thruster_id
             )
-        if rgt_thruster_force.any():
+        if self._thruster_forces_right.any():
             self._robot.set_external_force_and_torque(
-                rgt_thruster_force, self._no_torque, body_ids=self._right_thruster_id
+                self._thruster_forces_right, self._no_torque, body_ids=self._right_thruster_id
             )
 
     def _get_observations(self) -> dict:
