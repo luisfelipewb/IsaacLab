@@ -5,7 +5,7 @@
 
 import torch
 
-from omni.isaac.lab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
+from isaaclab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
 
 
 def custom_print(input_tensor):
@@ -64,8 +64,8 @@ def test_new(
         custom_print(forces)
 
     print("reset")
-    thurster_dynamics_left.reset()
-    thurster_dynamics_right.reset()
+    thurster_dynamics_left.reset(env_ids=None)
+    thurster_dynamics_right.reset(env_ids=None)
 
     for i in range(5):
         thurster_dynamics_left.update_forces()

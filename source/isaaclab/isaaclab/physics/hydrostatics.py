@@ -6,8 +6,8 @@
 import torch
 from dataclasses import MISSING
 
-from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.utils.math import euler_xyz_from_quat, matrix_from_quat
+from isaaclab.utils import configclass
+from isaaclab.utils.math import euler_xyz_from_quat, matrix_from_quat
 
 """
 Following Fossen's Equation,

@@ -6,8 +6,8 @@
 import torch
 from dataclasses import MISSING
 
-from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.utils.math import quat_rotate_inverse
+from isaaclab.utils import configclass
+from isaaclab.utils.math import quat_rotate_inverse
 
 
 @configclass

@@ -6,7 +6,7 @@
 import torch
 from dataclasses import MISSING
 
-from omni.isaac.lab.utils import configclass
+from isaaclab.utils import configclass
 
 
 @configclass

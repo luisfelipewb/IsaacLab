@@ -8,25 +8,25 @@ from __future__ import annotations
 import gymnasium as gym
 import torch
 
-import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
-from omni.isaac.lab.assets import Articulation, ArticulationCfg
-from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
-from omni.isaac.lab.envs.ui import BaseEnvWindow
-from omni.isaac.lab.markers import VisualizationMarkers
-from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
-from omni.isaac.lab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
-from omni.isaac.lab.scene import InteractiveSceneCfg
-from omni.isaac.lab.sim import SimulationCfg
-from omni.isaac.lab.terrains import TerrainImporterCfg
-from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.utils.math import subtract_frame_transforms
+import isaaclab.sim as sim_utils
+from isaaclab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
+from isaaclab.assets import Articulation, ArticulationCfg
+from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
+from isaaclab.envs.ui import BaseEnvWindow
+from isaaclab.markers import VisualizationMarkers
+from isaaclab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
+from isaaclab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim import SimulationCfg
+from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.utils import configclass
+from isaaclab.utils.math import subtract_frame_transforms
 
 ##
 # Pre-defined configs
 ##
-from omni.isaac.lab_assets import KINGFISHER_CFG  # isort: skip
-from omni.isaac.lab.markers import CUBOID_MARKER_CFG  # isort: skip
+from isaaclab_assets.robots.kingfisher import KINGFISHER_CFG  # isort: skip
+from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
 
 
 class KingfisherEnvWindow(BaseEnvWindow):
@@ -67,7 +67,6 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=physics_dt,
         render_interval=decimation,
-        disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",

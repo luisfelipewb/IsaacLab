@@ -17,7 +17,7 @@
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Tutorial on using the interactive scene interface.")
@@ -37,16 +37,16 @@ import torch
 
 torch.set_printoptions(precision=2, sci_mode=False)
 
-import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
-from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg
-from omni.isaac.lab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
-from omni.isaac.lab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
-from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
-from omni.isaac.lab.sim import SimulationContext
-from omni.isaac.lab.utils import configclass
+import isaaclab.sim as sim_utils
+from isaaclab.actuator_force.actuator_force import PropellerActuator, PropellerActuatorCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.physics.hydrodynamics import Hydrodynamics, HydrodynamicsCfg
+from isaaclab.physics.hydrostatics import Hydrostatics, HydrostaticsCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.sim import SimulationContext
+from isaaclab.utils import configclass
 
-from omni.isaac.lab_assets import KINGFISHER_CFG  # isort:skip
+from isaaclab_assets.robots.kingfisher import KINGFISHER_CFG  # isort:skip
 
 
 @configclass
