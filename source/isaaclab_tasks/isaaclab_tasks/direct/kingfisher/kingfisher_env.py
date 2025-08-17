@@ -143,8 +143,9 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
             19.5,  # 1.0
         ],
         interp_resolution=1001,
-        enable_randomization=True,
+        enable_randomization=False,
         randomization_range=0.1,
+        enable_init_randomization=True,
     )
 
     max_energy = 2.0  # Max of 1.0 per thruster
@@ -171,6 +172,11 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
     max_target_distance = 10.0
     min_target_bearing = -torch.pi
     max_target_bearing = torch.pi
+
+    # Enable randomizations
+    enable_v0_randomizations = True
+    enable_com_randomization = True
+    enable_external_wrench_randomization = True
 
 
 class KingfisherEnv(DirectRLEnv):
@@ -212,6 +218,7 @@ class KingfisherEnv(DirectRLEnv):
         self._thruster_forces_left = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._thruster_forces_right = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._no_torque = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        self._external_wrench = torch.zeros(self.num_envs, 1, 6, device=self.device)
 
         self._hydrostatics = Hydrostatics(num_envs=self.num_envs, device=self.device, cfg=self.cfg.hydrostatics_cfg)
 
@@ -275,7 +282,7 @@ class KingfisherEnv(DirectRLEnv):
             robot_pos, robot_quat
         )
         self._hydrodynamic_force[:, 0, :] = self._hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
-        combined = self._hydrostatic_force + self._hydrodynamic_force
+        combined = self._hydrostatic_force + self._hydrodynamic_force + self._external_wrench
         self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
 
         # Update the thruster forces
@@ -440,6 +447,29 @@ class KingfisherEnv(DirectRLEnv):
         joint_vel = self._robot.data.default_joint_vel[env_ids]
         default_root_state = self._robot.data.default_root_state[env_ids]
         default_root_state[:, :3] += self._terrain.env_origins[env_ids]
+
+        # Add random initial velocity to vx and rz
+        if self.cfg.enable_v0_randomizations:
+            default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 1.5 - 0.5  # -0.5 - 1
+            default_root_state[:, 12] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0
+
+        # Generate random CoM offset (2d)
+        if self.cfg.enable_com_randomization:
+            com_offset = torch.rand(len(env_ids), device=self.device) * 0.1 - 0.05
+            com = self._robot.root_physx_view.get_coms().to(self.device)
+            com[env_ids, 0, 1] += com_offset
+            if env_ids is None:
+                ids_cpu = self._ALL_INDICES_CPU
+            else:
+                ids_cpu = env_ids.to("cpu")
+            self._robot.root_physx_view.set_coms(com.to("cpu"), ids_cpu)
+
+        # Randomize external wrench
+        if self.cfg.enable_external_wrench_randomization:
+            self._external_wrench[env_ids, 0, 0] = torch.rand(len(env_ids), device=self.device) * 0.6 - 0.3  # x force
+            self._external_wrench[env_ids, 0, 1] = torch.rand(len(env_ids), device=self.device) * 0.6 - 0.3  # y force
+            self._external_wrench[env_ids, 0, 5] = torch.rand(len(env_ids), device=self.device) * 0.6 - 0.3  # r force
+
         self._robot.write_root_link_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_link_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)

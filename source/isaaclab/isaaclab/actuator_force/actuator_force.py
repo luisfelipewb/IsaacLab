@@ -19,6 +19,7 @@ class PropellerActuatorCfg:
     interp_resolution: int = 1001
     enable_randomization: bool = True
     randomization_range: float = 0.1  # Percentage of randomization on the forces
+    enable_init_randomization: bool = False
 
 
 class PropellerActuator:
@@ -108,5 +109,9 @@ class PropellerActuator:
             randomization = torch.rand(len(env_ids), device=self.device) * 2 - 1
             self.randomization_factor[env_ids] = randomization * self.cfg.randomization_range + 1
 
-        self._current_cmds[env_ids] = 0.0
-        self._target_cmds[env_ids] = 0.0
+        if self.cfg.enable_init_randomization:
+            self._current_cmds[env_ids] = torch.rand(len(env_ids), device=self.device) * 2 - 1
+            self._target_cmds[env_ids] = self._current_cmds[env_ids].clone()
+        else:
+            self._current_cmds[env_ids] = 0.0
+            self._target_cmds[env_ids] = 0.0
