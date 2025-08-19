@@ -110,7 +110,7 @@ class PropellerActuator:
             self.randomization_factor[env_ids] = randomization * self.cfg.randomization_range + 1
 
         if self.cfg.enable_init_randomization:
-            self._current_cmds[env_ids] = torch.rand(len(env_ids), device=self.device) * 2 - 1
+            self._current_cmds[env_ids] = torch.rand(len(env_ids), device=self.device) * 0.7 - 0.35
             self._target_cmds[env_ids] = self._current_cmds[env_ids].clone()
         else:
             self._current_cmds[env_ids] = 0.0

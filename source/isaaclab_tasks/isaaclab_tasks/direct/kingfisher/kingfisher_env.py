@@ -143,29 +143,31 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
             19.5,  # 1.0
         ],
         interp_resolution=1001,
-        enable_randomization=False,
+        enable_randomization=True,
         randomization_range=0.1,
         enable_init_randomization=True,
     )
 
     max_energy = 2.0  # Max of 1.0 per thruster
 
-    # reward scales
-    distance_reward_scale = 0.0
-    distance_progress_reward_scale = 10.0
-    bearing_progress_reward_scale = 0.0
-
+    # Thresholds
     goal_reached_threshold = 0.1
-    goal_reached_scale = 100.0
-
-    energy_penalty_scale = -0.001
-    velocity_penalty_scale = -10.0
     velocity_lower_bound = -0.05
-    velocity_upper_bound = 0.7
-    velocity_sigmoid_scale = 100.0  # Higher for sharper sigmoid
-    time_penalty_scale = -1.0
-    bearing_penalty_scale = 1.0
-    beargin_penalty_coef = -4.0
+    velocity_upper_bound = 0.6
+    bearing_reached_threshold = 0.1
+
+    # Reward scales
+    distance_progress_reward_scale = 1.0
+    bearing_progress_reward_scale = 5.0
+    goal_reached_scale = 10.0
+    bearing_reached_reward_scale = 0.01
+    time_penalty_scale = -0.05
+    energy_penalty_scale = -0.1
+    velocity_penalty_scale = 1.0
+
+    # Reward coeficients
+    velocity_penalty_coef = -10.0
+    bearing_progress_coef = -1.5
 
     # Environment
     min_target_distance = 1.0
@@ -196,11 +198,12 @@ class KingfisherEnv(DirectRLEnv):
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
                 "1_distance_progress",
-                "2_goal_reached",
-                "3_energy",
-                "4_velocity",
-                "5_bearing_penalty",
-                "6_time",
+                "2_bearing_progress",
+                "3_goal_reached",
+                "4_bearing_reached",
+                "5_energy",
+                "6_velocity",
+                "7_time",
             ]
         }
         # Get specific body indices
@@ -299,7 +302,9 @@ class KingfisherEnv(DirectRLEnv):
 
     def _get_observations(self) -> dict:
 
-        # Observations
+        # Update previous state
+        self.previous_distance = self.distance.clone()
+        self.previous_bearing = self.bearing.clone()
 
         # Desired position in the robot frame (2D)
         self.desired_pos_b_3d, _ = subtract_frame_transforms(
@@ -325,49 +330,49 @@ class KingfisherEnv(DirectRLEnv):
 
     def _get_rewards(self) -> torch.Tensor:
 
-        # Distance progress
+        # Distance progress - Potentail field reward to guide policy convergence
         self.distance_progress = self.previous_distance - self.distance
-        distance_progress_norm = self.distance_progress / torch.abs(self.initial_distance)
-        distance_progress_reward = distance_progress_norm * self.cfg.distance_progress_reward_scale
-        self.previous_distance = self.distance.clone()
+        distance_progress_reward = self.distance_progress * self.cfg.distance_progress_reward_scale
 
-        # Energy
-        self.energy = torch.sum(torch.square(self._actions), dim=1)
+        # Bearing progress - Potential field reward to guide policy convergence
+        self.bearing_progress = torch.cos(self.bearing) - torch.cos(self.previous_bearing)
+        bearing_progress_reward = self.bearing_progress * self.cfg.bearing_progress_reward_scale
+
+        # Bearing reached - Reward for being closely aligned with the goal direction
+        bearing_reached = 1.0 - torch.square(self.bearing / self.cfg.bearing_reached_threshold)  # 1 - (b/t)^2
+        bearing_reached_reward = torch.clamp(bearing_reached, 0, 1) * self.cfg.bearing_reached_reward_scale
 
         # Reached goal
         goal_reward = torch.zeros(self.num_envs, device=self.device)
         goal_reward[self.distance < self.cfg.goal_reached_threshold] = self.cfg.goal_reached_scale
 
-        # Reduce energy consumption
+        # Energy - Smooth control input and minimizing unnecessary movements
+        self.energy = torch.sum(torch.square(self._actions), dim=1)
         energy_norm = self.energy * self.step_dt / self.cfg.max_energy
         energy_reward = self.cfg.energy_penalty_scale * energy_norm
 
-        # Penalize range of velocities
+        # Velocity penalty - define linear velocity operating rage
         root_lin_vel_b_x = self._robot.data.root_lin_vel_b[:, 0]
         velocity_penalty = torch.zeros(self.num_envs, device=self.device)
-        # Sigmoid function to penalize low velocities
-        sig_low = torch.sigmoid(-self.cfg.velocity_sigmoid_scale * (root_lin_vel_b_x - self.cfg.velocity_lower_bound))
-        # Sigmoid function to penalize high velocities
-        sig_high = torch.sigmoid(self.cfg.velocity_sigmoid_scale * (root_lin_vel_b_x - self.cfg.velocity_upper_bound))
-        # Combine the two sigmoid functions
-        velocity_penalty = self.cfg.velocity_penalty_scale * (sig_low + sig_high)
+        # max_vel_comp = MAX(v_min -v, v - v_max, 0)
+        max_vel_comp = torch.max(
+            self.cfg.velocity_lower_bound - root_lin_vel_b_x, root_lin_vel_b_x - self.cfg.velocity_upper_bound
+        )
+        max_vel_comp = torch.clamp(max_vel_comp, min=0)
+        velocity_penalty = torch.exp(self.cfg.velocity_penalty_coef * max_vel_comp) - 1
+        velocity_penalty = self.cfg.velocity_penalty_scale * velocity_penalty
 
-        # Penalize bearing errors
-        bearing_penalty = torch.exp(self.cfg.beargin_penalty_coef * torch.abs(self.bearing)) - 1
-        bearing_penalty = self.cfg.bearing_penalty_scale * bearing_penalty
-        # Don't penalize if too close to the goal as the bearing becomes unstable
-        # bearing_penalty[self.distance < 0.2] = 0.0
-
-        # Time
-        time_reward = torch.ones(self.num_envs, device=self.device) * self.cfg.time_penalty_scale * self.step_dt
+        # Time pressure
+        time_reward = torch.ones(self.num_envs, device=self.device) * self.cfg.time_penalty_scale
 
         rewards = {
             "1_distance_progress": distance_progress_reward,
-            "2_goal_reached": goal_reward,
-            "3_energy": energy_reward,
-            "4_velocity": velocity_penalty,
-            "5_bearing_penalty": bearing_penalty,
-            "6_time": time_reward,
+            "2_bearing_progress": bearing_progress_reward,
+            "3_goal_reached": goal_reward,
+            "4_bearing_reached": bearing_reached_reward,
+            "5_energy": energy_reward,
+            "6_velocity": velocity_penalty,
+            "7_time": time_reward,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
@@ -399,6 +404,7 @@ class KingfisherEnv(DirectRLEnv):
         final_distance_to_goal = self.distance[env_ids].mean()
         final_bearing_to_goal = self.bearing[env_ids].mean()
         final_energy = self.energy[env_ids].mean()
+        final_velocity = self._robot.data.root_lin_vel_b[:, 0].mean()
         extras = dict()
         for key in self._episode_sums.keys():
             episodic_sum_avg = torch.mean(self._episode_sums[key][env_ids])
@@ -414,6 +420,7 @@ class KingfisherEnv(DirectRLEnv):
         extras["Metrics/final_distance_to_goal"] = final_distance_to_goal.item()
         extras["Metrics/final_bearing_to_goal"] = final_bearing_to_goal.item()
         extras["Metrics/final_energy"] = final_energy.item()
+        extras["Metrics/final_velocity"] = final_velocity.item()
         self.extras["log"].update(extras)
 
         self._thruster_dynamics_left.reset(env_ids)
@@ -431,7 +438,7 @@ class KingfisherEnv(DirectRLEnv):
             self.cfg.min_target_bearing, self.cfg.max_target_bearing
         )
         self.bearing[env_ids] = self.initial_bearing[env_ids]
-        self.previous_bearing = self.initial_bearing[env_ids]
+        self.previous_bearing[env_ids] = self.initial_bearing[env_ids]
 
         self.initial_distance[env_ids] = torch.zeros_like(self._desired_pos_w[env_ids, 0]).uniform_(
             self.cfg.min_target_distance, self.cfg.max_target_distance
@@ -450,7 +457,7 @@ class KingfisherEnv(DirectRLEnv):
 
         # Add random initial velocity to vx and rz
         if self.cfg.enable_v0_randomizations:
-            default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 1.5 - 0.5  # -0.5 - 1
+            default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 0.7
             default_root_state[:, 12] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0
 
         # Generate random CoM offset (2d)
