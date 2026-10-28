@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
@@ -7,10 +12,14 @@
 
 from __future__ import annotations
 
+import os
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+KINGFISHER_ASSET_DIR = os.environ.get("KINGFISHER_ASSET_DIR", os.path.expanduser("~/assets/kingfisher"))
+"""Local folder holding the flattened Kingfisher USDs (not tracked in git). Override with ``KINGFISHER_ASSET_DIR``."""
 
 ##
 # Configuration
@@ -19,7 +28,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 KINGFISHER_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/omniverse://localhost/Projects/R3AMA/kingfisher.usd",
+        usd_path=f"{KINGFISHER_ASSET_DIR}/kingfisher.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             rigid_body_enabled=True,
@@ -28,6 +37,9 @@ KINGFISHER_CFG = ArticulationCfg(
             max_depenetration_velocity=100.0,
             enable_gyroscopic_forces=True,
         ),
+        # The water surface is at z=0, the same height as the ground plane, so the floating hull (keel at z~-0.11)
+        # would rest on the ground and get no buoyancy. Buoyancy and drag are computed analytically, not from contacts.
+        collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,
             solver_position_iteration_count=4,

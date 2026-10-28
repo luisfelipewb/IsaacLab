@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
@@ -90,7 +95,7 @@ class KingfisherEnvCfg(DirectRLEnvCfg):
 
     # Hydrostatics
     hydrostatics_cfg: HydrostaticsCfg = HydrostaticsCfg(
-        mass=35.0,  # Kg considering added sensors
+        mass=36.6,  # Kg, total mass of the USD (35 base + 2 x 0.55 thrusters + 0.5 sail link)
         width=1.0,  # Kingfisher/Heron width 1.0m in Spec Sheet
         length=1.3,  # Kingfisher/Heron length 1.3m in Spec Sheet
         waterplane_area=0.33,  # 0.15 width * 1.1 length * 2 hulls
@@ -208,8 +213,8 @@ class KingfisherEnv(DirectRLEnv):
         }
         # Get specific body indices
         self._base_link = self._robot.find_bodies("base_link")[0]
-        self._left_thruster_id = self._robot.find_bodies("thruster_left")[0]
-        self._right_thruster_id = self._robot.find_bodies("thruster_right")[0]
+        self._left_thruster_id = self._robot.find_bodies("left_thruster_link")[0]
+        self._right_thruster_id = self._robot.find_bodies("right_thruster_link")[0]
 
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
@@ -286,22 +291,22 @@ class KingfisherEnv(DirectRLEnv):
         )
         self._hydrodynamic_force[:, 0, :] = self._hydrodynamics.ComputeHydrodynamicsEffects(robot_quat, robot_vel)
         combined = self._hydrostatic_force + self._hydrodynamic_force + self._external_wrench
-        self._robot.set_external_force_and_torque(combined[..., :3], combined[..., 3:], body_ids=self._base_link)
+        # The wrench composer wraps the inputs with wp.from_torch, so pass contiguous tensors
+        self._robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=combined[..., :3].contiguous(), torques=combined[..., 3:].contiguous(), body_ids=self._base_link
+        )
 
-        # Update the thruster forces
+        # Update the thruster forces (zero thrust is written too, so no stale force stays in the composer)
         self._thruster_forces_left[:, 0] = self._thruster_dynamics_left.update_forces()
         self._thruster_forces_right[:, 0] = self._thruster_dynamics_right.update_forces()
-        if self._thruster_forces_left.any():
-            self._robot.set_external_force_and_torque(
-                self._thruster_forces_left, self._no_torque, body_ids=self._left_thruster_id
-            )
-        if self._thruster_forces_right.any():
-            self._robot.set_external_force_and_torque(
-                self._thruster_forces_right, self._no_torque, body_ids=self._right_thruster_id
-            )
+        self._robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=self._thruster_forces_left, torques=self._no_torque, body_ids=self._left_thruster_id
+        )
+        self._robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=self._thruster_forces_right, torques=self._no_torque, body_ids=self._right_thruster_id
+        )
 
     def _get_observations(self) -> dict:
-
         # Update previous state
         self.previous_distance = self.distance.clone()
         self.previous_bearing = self.bearing.clone()
@@ -329,7 +334,6 @@ class KingfisherEnv(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-
         # Distance progress - Potentail field reward to guide policy convergence
         self.distance_progress = self.previous_distance - self.distance
         distance_progress_reward = self.distance_progress * self.cfg.distance_progress_reward_scale

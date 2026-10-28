@@ -1,17 +1,22 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import torch
 from dataclasses import MISSING
+
+import torch
 
 from isaaclab.utils import configclass
 
 
 @configclass
 class PropellerActuatorCfg:
-
     cmd_lower_range: float = MISSING
     cmd_upper_range: float = MISSING
     command_rate: float = MISSING  # Frequency of command updates in Hz

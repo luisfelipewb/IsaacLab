@@ -1,13 +1,19 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import torch
 from dataclasses import MISSING
 
+import torch
+
 from isaaclab.utils import configclass
-from isaaclab.utils.math import quat_rotate_inverse
+from isaaclab.utils.math import quat_apply_inverse
 
 
 @configclass
@@ -32,7 +38,6 @@ class HydrodynamicsCfg:
 
 class Hydrodynamics:
     def __init__(self, num_envs, device, cfg: HydrodynamicsCfg):
-
         self.num_envs = num_envs
         self.device = device
         self.cfg = cfg
@@ -101,9 +106,8 @@ class Hydrodynamics:
         return damping_matrix
 
     def ComputeHydrodynamicsEffects(self, quaternions, world_vel):
-
-        self.local_lin_velocities = quat_rotate_inverse(quaternions, world_vel[:, :3])
-        self.local_ang_velocities = quat_rotate_inverse(quaternions, world_vel[:, 3:])
+        self.local_lin_velocities = quat_apply_inverse(quaternions, world_vel[:, :3])
+        self.local_ang_velocities = quat_apply_inverse(quaternions, world_vel[:, 3:])
         self.local_velocities = torch.hstack([self.local_lin_velocities, self.local_ang_velocities])
 
         # Update damping matrix

@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
@@ -76,7 +81,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
     # Initialize the hydrodynamics and hydrostatics
     hydrostatics_cfg = HydrostaticsCfg(
-        mass=35.0,  # Kg considering added sensors
+        mass=36.6,  # Kg, total mass of the USD (35 base + 2 x 0.55 thrusters + 0.5 sail link)
         width=1.0,  # Kingfisher/Heron width 1.0m in Spec Sheet
         length=1.3,  # Kingfisher/Heron length 1.3m in Spec Sheet
         waterplane_area=0.33,  # 0.15 width * 1.1 length * 2 hulls
@@ -181,14 +186,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
         # Get the link ids
         base_link_id, _ = robot.find_bodies("base_link")
-        left_thruster_id, _ = robot.find_bodies("thruster_left")
-        right_thruster_id, _ = robot.find_bodies("thruster_right")
+        left_thruster_id, _ = robot.find_bodies("left_thruster_link")
+        right_thruster_id, _ = robot.find_bodies("right_thruster_link")
 
         # Expand forces and toques to match the number of bodies
         # E.g, for a [num_envs, 6] force, expand to [num_envs, len(body_ids), 3]
-        force = force.unsqueeze(1).expand(-1, len(base_link_id), -1)
-        torque = torque.unsqueeze(1).expand(-1, len(base_link_id), -1)
-        robot.set_external_force_and_torque(force, torque, body_ids=base_link_id)
+        # The wrench composer wraps the inputs with wp.from_torch, so pass contiguous tensors
+        force = force.unsqueeze(1).expand(-1, len(base_link_id), -1).contiguous()
+        torque = torque.unsqueeze(1).expand(-1, len(base_link_id), -1).contiguous()
+        robot.permanent_wrench_composer.set_forces_and_torques(forces=force, torques=torque, body_ids=base_link_id)
 
         thrust_cmds = torch.tensor([1.0, 1.0], dtype=torch.float32, device=robot.device)
         # Expand the thrust commands in the first dimension to match the number of environments.
@@ -203,10 +209,12 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # print(f"right_thruster_forces:\n {right_thruster_forces.shape}\n{right_thruster_forces}\n")
 
         no_torque = torch.zeros((scene.num_envs, 1, 3), dtype=torch.float32, device=robot.device)
-        if left_thruster_forces.any():
-            robot.set_external_force_and_torque(left_thruster_forces, no_torque, body_ids=left_thruster_id)
-        if right_thruster_forces.any():
-            robot.set_external_force_and_torque(right_thruster_forces, no_torque, body_ids=right_thruster_id)
+        robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=left_thruster_forces, torques=no_torque, body_ids=left_thruster_id
+        )
+        robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=right_thruster_forces, torques=no_torque, body_ids=right_thruster_id
+        )
 
         scene.write_data_to_sim()
 

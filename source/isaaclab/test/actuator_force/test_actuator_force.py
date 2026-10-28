@@ -1,7 +1,25 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+
+"""Launch Isaac Sim Simulator first.
+
+This is only needed because ``isaaclab.utils`` imports ``pxr``.
+"""
+
+from isaaclab.app import AppLauncher
+
+# launch omniverse app in headless mode
+simulation_app = AppLauncher(headless=True).app
+
+
+"""Rest everything follows."""
 
 import torch
 
@@ -15,9 +33,20 @@ def custom_print(input_tensor):
     print()
 
 
+def default_thrust_cmds(device="cpu"):
+    """Left/right command pairs covering the full range, one row per environment."""
+    return torch.tensor(
+        [[0.0, -0.0], [0.2, -0.2], [0.4, -0.4], [0.6, -0.6], [0.8, -0.8], [1.0, -1.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+
+
 def test_new(
-    iters=10, device="cpu", num_envs=2, physics_dt=1.0 / 50.0, thrust_cmds: torch.Tensor = None, command_rate=1.0
+    iters=50, device="cpu", num_envs=6, physics_dt=1.0 / 50.0, thrust_cmds: torch.Tensor = None, command_rate=1.0
 ):
+    if thrust_cmds is None:
+        thrust_cmds = default_thrust_cmds(device)
 
     propeller_cfg = PropellerActuatorCfg(
         cmd_lower_range=-1.0,
@@ -36,7 +65,7 @@ def test_new(
             0.0,  # -0.1
             0.0,  # 0.0
             0.0,  # 0.1
-            0.0,  # 0.2thurster_dynamics_left
+            0.0,  # 0.2
             0.5,  # 0.3
             1.5,  # 0.4
             4.75,  # 0.5
@@ -46,6 +75,7 @@ def test_new(
             19.5,  # 0.9
             19.5,  # 1.0
         ],
+        enable_randomization=False,
     )
     thurster_dynamics_left = PropellerActuator(num_envs=num_envs, device=device, dt=physics_dt, cfg=propeller_cfg)
 
@@ -60,8 +90,15 @@ def test_new(
 
         # combine left and right forces
         forces = torch.stack([thurster_dynamics_left.get_forces(), thurster_dynamics_right.get_forces()], dim=-1)
-        print(f"Step {i+1:02d}", end=" | ")
+        print(f"Step {i + 1:02d}", end=" | ")
         custom_print(forces)
+
+    # with iters * physics_dt * command_rate >= 1 the commands have reached their targets
+    assert torch.allclose(thurster_dynamics_left._current_cmds, thrust_cmds[..., 0])
+    assert torch.allclose(thurster_dynamics_right._current_cmds, thrust_cmds[..., 1])
+    # the force table is 19.5 N at full forward and -4.0 N at full reverse
+    assert forces[-1, 0].item() == 19.5
+    assert forces[-1, 1].item() == -4.0
 
     print("reset")
     thurster_dynamics_left.reset(env_ids=None)
@@ -73,8 +110,11 @@ def test_new(
 
         # combine left and right forces
         forces = torch.stack([thurster_dynamics_left.get_forces(), thurster_dynamics_right.get_forces()], dim=-1)
-        print(f"Step {i+1:02d}", end=" | ")
+        print(f"Step {i + 1:02d}", end=" | ")
         custom_print(forces)
+
+    # after a reset the targets are zero, and so are the forces
+    assert torch.all(forces == 0.0)
 
     # set target commands again
     print("set target commands again")
@@ -85,22 +125,17 @@ def test_new(
         thurster_dynamics_left.update_forces()
         thurster_dynamics_right.update_forces()
         forces = torch.stack([thurster_dynamics_left.get_forces(), thurster_dynamics_right.get_forces()], dim=-1)
-        print(f"Step {i+1:02d}", end=" | ")
+        print(f"Step {i + 1:02d}", end=" | ")
         custom_print(forces)
 
 
 if __name__ == "__main__":
-
     device = "cuda:0"
     device = "cpu"
     command_rate = 1.0
     physics_dt = 1.0 / 50.0  # 50Hz
     num_envs = 6
-    thrust_cmds = torch.tensor(
-        [[0.0, -0.0], [0.2, -0.2], [0.4, -0.4], [0.6, -0.6], [0.8, -0.8], [1.0, -1.0]],
-        dtype=torch.float32,
-        device=device,
-    )
+    thrust_cmds = default_thrust_cmds(device)
 
     iters = 50
 
