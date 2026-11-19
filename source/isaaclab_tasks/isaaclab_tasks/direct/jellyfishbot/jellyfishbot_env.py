@@ -177,7 +177,9 @@ class JellyfishbotEnvCfg(DirectRLEnvCfg):
     bearing_reached_reward_scale = 0.01
     time_penalty_scale = -0.05
     energy_penalty_scale = -0.1
-    velocity_penalty_scale = 1.0
+    # Off: no speed limit, the boat may go as fast as the thrusters allow (the Kingfisher uses 1.0, with the
+    # velocity_lower_bound/velocity_upper_bound band on vx). The term is still computed and logged as 6_velocity.
+    velocity_penalty_scale = 0.0
 
     # Reward coefficients
     velocity_penalty_coef = -10.0
