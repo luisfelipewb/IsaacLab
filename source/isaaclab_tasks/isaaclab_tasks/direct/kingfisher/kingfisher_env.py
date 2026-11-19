@@ -216,6 +216,9 @@ class KingfisherEnv(DirectRLEnv):
         self._left_thruster_id = self._robot.find_bodies("left_thruster_link")[0]
         self._right_thruster_id = self._robot.find_bodies("right_thruster_link")[0]
 
+        # Default CoMs, so the randomization starts from them instead of adding up over resets
+        self._default_coms = self._robot.root_physx_view.get_coms().clone()  # (num_envs, num_bodies, 7), on CPU
+
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
         self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
@@ -464,16 +467,13 @@ class KingfisherEnv(DirectRLEnv):
             default_root_state[:, 7] = torch.rand(len(env_ids), device=self.device) * 0.7
             default_root_state[:, 12] = torch.rand(len(env_ids), device=self.device) * 2.0 - 1.0
 
-        # Generate random CoM offset (2d)
+        # Random lateral CoM offset of base_link, from the default CoM
         if self.cfg.enable_com_randomization:
-            com_offset = torch.rand(len(env_ids), device=self.device) * 0.1 - 0.05
-            com = self._robot.root_physx_view.get_coms().to(self.device)
-            com[env_ids, 0, 1] += com_offset
-            if env_ids is None:
-                ids_cpu = self._ALL_INDICES_CPU
-            else:
-                ids_cpu = env_ids.to("cpu")
-            self._robot.root_physx_view.set_coms(com.to("cpu"), ids_cpu)
+            ids_cpu = env_ids.cpu()
+            com_offset = torch.rand(len(env_ids)) * 0.1 - 0.05
+            com = self._default_coms.clone()
+            com[ids_cpu, self._base_link[0], 1] += com_offset
+            self._robot.root_physx_view.set_coms(com, ids_cpu)
 
         # Randomize external wrench
         if self.cfg.enable_external_wrench_randomization:
